@@ -11,11 +11,11 @@ from .contracts import ExperimentConfig, Usage
 ROLES = {"executor", "INV", "DOM", "COMPOSE", "SELECT", "REFLECT", "subagent", "summarizer"}
 
 
-def make_model(config: ExperimentConfig, role: str) -> ChatFireworks:
+def make_model(config: ExperimentConfig, role: str, *, gateway_url: str | None = None, gateway_token: str | None = None) -> ChatFireworks:
     if role not in ROLES or config.harness_profile != "harness-clone-v1":
         raise ValueError("unknown role or harness profile")
-    gateway = os.environ.get("HARNESS_GATEWAY_URL")
-    key = os.environ.get("HARNESS_GATEWAY_TOKEN") if gateway else os.environ.get("FIREWORKS_API_KEY")
+    gateway = gateway_url or os.environ.get("HARNESS_GATEWAY_URL")
+    key = (gateway_token or os.environ.get("HARNESS_GATEWAY_TOKEN")) if gateway else os.environ.get("FIREWORKS_API_KEY")
     if not key:
         raise ValueError("configure FIREWORKS_API_KEY or the harness inference gateway")
     return ChatFireworks(

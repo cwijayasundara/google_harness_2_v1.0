@@ -45,7 +45,7 @@ class InferenceGateway:
         self.ledger.settle(identity, normalize_usage(response))
 
 
-def serve(config: ExperimentConfig, ledger_path: Path, token: str, port: int = 8080):
+def gateway_server(config: ExperimentConfig, ledger_path: Path, token: str, port: int = 0, host: str = "127.0.0.1"):
     gateway = InferenceGateway(config, BudgetLedger(ledger_path,config.max_usd),token)
     key = os.environ["FIREWORKS_API_KEY"]
     class Handler(BaseHTTPRequestHandler):
@@ -100,8 +100,8 @@ def serve(config: ExperimentConfig, ledger_path: Path, token: str, port: int = 8
                 self.send_header("Content-Length",str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-    ThreadingHTTPServer(("0.0.0.0",port),Handler).serve_forever()
+    return ThreadingHTTPServer((host,port),Handler)
 
 
 if __name__ == "__main__":
-    serve(ExperimentConfig.model_validate_json(Path("/control/config.json").read_text()),Path("/ledger/budget.sqlite"),os.environ["HARNESS_GATEWAY_TOKEN"])
+    gateway_server(ExperimentConfig.model_validate_json(Path("/control/config.json").read_text()),Path("/ledger/budget.sqlite"),os.environ["HARNESS_GATEWAY_TOKEN"],8080,"0.0.0.0").serve_forever()
