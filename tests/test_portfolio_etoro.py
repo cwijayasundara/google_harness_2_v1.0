@@ -68,6 +68,20 @@ def test_normalize_missing_position_field_aborts(field):
         normalize_etoro_pnl(payload, FETCHED_AT)
 
 
+def test_missing_currency_aborts():
+    payload = load_fixture()
+    del payload["currency"]
+    with pytest.raises(ValueError, match="currency"):
+        normalize_etoro_pnl(payload, FETCHED_AT)
+
+
+def test_missing_cash_aborts():
+    payload = load_fixture()
+    del payload["cash"]
+    with pytest.raises(ValueError, match="cash"):
+        normalize_etoro_pnl(payload, FETCHED_AT)
+
+
 def test_normalize_missing_positions_aborts():
     with pytest.raises(ValueError, match="positions"):
         normalize_etoro_pnl({"currency": "USD", "cash": 800.0}, FETCHED_AT)

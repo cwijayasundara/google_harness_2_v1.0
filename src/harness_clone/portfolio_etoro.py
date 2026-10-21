@@ -37,11 +37,10 @@ def _cash_amount(payload: dict, positions: list[dict]) -> float:
     for key in ("cash", "cash_balance", "credit"):
         if payload.get(key) is not None:
             return float(payload[key])
-    return sum(
-        float(p["units"]) * float(p["current_price"])
-        for p in positions
-        if p.get("asset_class") == "cash"
-    )
+    cash_rows = [p for p in positions if p.get("asset_class") == "cash"]
+    if not cash_rows:
+        raise ValueError("missing required field: cash")
+    return sum(float(p["units"]) * float(p["current_price"]) for p in cash_rows)
 
 
 def normalize_etoro_pnl(payload: dict, fetched_at: str) -> PortfolioSnapshot:
@@ -88,7 +87,7 @@ def normalize_etoro_pnl(payload: dict, fetched_at: str) -> PortfolioSnapshot:
         )
     return PortfolioSnapshot(
         fetched_at=fetched_at,
-        currency=str(body.get("currency") or body.get("account_currency") or "USD"),
+        currency=str(_required(body, "currency")),
         cash_weight=cash / total,
         positions=positions,
     )
