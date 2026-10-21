@@ -117,3 +117,78 @@ def test_history_empty_ticker_data_is_flagged_missing(tmp_path, fake_provider):
     tasks = build_history(tmp_path, [date(2026, 9, 1)], ["AAPL"], EmptyProvider(), proxy())
     market = json.loads((tasks[0].source_root / "market.json").read_text())
     assert market["AAPL"]["missing"] is True
+
+
+# --- C-2: proxy holdings are repriced point-in-time, never at today's prices ---
+def two_holding_proxy():
+    return PortfolioSnapshot(
+        fetched_at="2026-10-21T08:00:00Z",
+        currency="USD",
+        cash_weight=0.2,
+        positions=[
+            PortfolioPosition(
+                instrument="Apple Inc",
+                ticker="AAPL",
+                asset_class="equity",
+                units=10.0,
+                open_rate=50.0,  # may be a purchase after the historical day
+                current_price=999.0,  # today's price: must never leak
+                unrealized_pnl_pct=0.5,
+                portfolio_weight=0.4,
+            ),
+            PortfolioPosition(
+                instrument="Bitcoin",
+                ticker="BTC",
+                asset_class="crypto",
+                units=1.0,
+                open_rate=60_000.0,
+                current_price=99_999.0,
+                unrealized_pnl_pct=0.3,
+                portfolio_weight=0.4,
+            ),
+        ],
+    )
+
+
+def test_history_portfolio_prices_match_that_days_market(tmp_path, fake_provider):
+    day = date(2026, 9, 1)
+    # Holdings are summarised even when the caller's ticker list omits them.
+    tasks = build_history(tmp_path, [day], ["SPY"], fake_provider, two_holding_proxy())
+    source = tasks[0].source_root
+    portfolio = json.loads((source / "portfolio.json").read_text())
+    market = json.loads((source / "market.json").read_text())
+    assert portfolio["proxy"] is True
+    assert "2026-10-21" not in json.dumps(portfolio)
+    assert portfolio["fetched_at"].startswith("2026-09-01")
+    assert portfolio["cash_weight"] == pytest.approx(0.2)
+    assert portfolio["missing_positions"] == []
+    values = {}
+    for position in portfolio["positions"]:
+        price = market[position["ticker"]]["last_price"]
+        # No price in portfolio.json differs from that day's market.json value.
+        assert position["current_price"] == price
+        assert position["open_rate"] == price
+        assert position["unrealized_pnl_pct"] == 0.0
+        values[position["ticker"]] = position["units"] * price
+    total = sum(values.values())
+    for position in portfolio["positions"]:
+        expected = 0.8 * values[position["ticker"]] / total
+        assert position["portfolio_weight"] == pytest.approx(expected)
+    assert {p["ticker"] for p in portfolio["positions"]} == {"AAPL", "BTC"}
+
+
+def test_history_drops_and_reports_holdings_without_a_price_that_day(tmp_path):
+    class PartialProvider(FakeProvider):
+        def dated_closes(self, ticker, asset_class, end, days):
+            if ticker == "BTC":
+                return []
+            return super().dated_closes(ticker, asset_class, end, days)
+
+    tasks = build_history(
+        tmp_path, [date(2026, 9, 1)], [], PartialProvider(), two_holding_proxy()
+    )
+    portfolio = json.loads((tasks[0].source_root / "portfolio.json").read_text())
+    assert [p["ticker"] for p in portfolio["positions"]] == ["AAPL"]
+    assert portfolio["missing_positions"] == ["BTC"]
+    assert portfolio["positions"][0]["portfolio_weight"] == pytest.approx(0.8)
+    assert "99999" not in json.dumps(portfolio) and "999.0" not in json.dumps(portfolio)

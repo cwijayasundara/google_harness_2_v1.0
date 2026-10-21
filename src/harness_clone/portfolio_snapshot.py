@@ -61,6 +61,7 @@ def build_snapshot_task(
     prior_outcomes: list[dict],
     *,
     proxy: bool = False,
+    portfolio_extra: dict | None = None,
 ) -> TaskSpec:
     dated_dir = Path(base) / day.isoformat()
     if dated_dir.exists() or dated_dir.is_symlink():
@@ -82,6 +83,8 @@ def build_snapshot_task(
     if proxy:
         # Serialization-only flag: the caller's model object is never mutated.
         portfolio_data["proxy"] = True
+    if portfolio_extra:
+        portfolio_data.update(portfolio_extra)
     payloads: dict[str, bytes] = {
         "task.json": json.dumps(task_data, indent=2).encode(),
         "source/portfolio.json": json.dumps(portfolio_data, indent=2).encode(),
