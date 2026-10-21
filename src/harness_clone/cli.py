@@ -146,8 +146,19 @@ def _parse_day(value) -> date:
 def _etoro_get(url: str, headers: dict) -> dict:
     import httpx
 
-    response = httpx.get(url, headers=headers, timeout=30.0)
-    response.raise_for_status()
+    path = url.split("?", 1)[0]
+    try:
+        response = httpx.get(url, headers=headers, timeout=30.0)
+    except httpx.HTTPError as exc:
+        raise OSError(f"eToro API unreachable at {path}: {type(exc).__name__}") from None
+    if response.status_code in (401, 403):
+        raise ValueError(
+            f"eToro API rejected the keys ({response.status_code}) at {path}; check "
+            "ETORO_API_KEY / ETORO_USER_KEY, their Read permission, and ETORO_ENVIRONMENT"
+        )
+    if response.status_code >= 400:
+        # Never echo headers: they carry the keys.
+        raise ValueError(f"eToro API returned {response.status_code} at {path}")
     return response.json()
 
 

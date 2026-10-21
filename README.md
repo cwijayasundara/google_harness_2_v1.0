@@ -23,7 +23,7 @@ npm ci --prefix workers/pi
 
 ```bash
 uv run ruff check .
-uv run pytest -q                       # expect 244 passed, 3 skipped
+uv run pytest -q                       # expect 261 passed, 3 skipped
 uv run harness-clone doctor            # offline environment report
 uv run harness-clone demo --run-dir runs/demo-parallel --mode parallel --k 2
 uv run harness-clone inspect --run-dir runs/demo-parallel
@@ -40,7 +40,8 @@ HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 3 passed
 
 ```bash
 export FIREWORKS_API_KEY=...    # required for every paid command
-export ETORO_API_KEY=...        # only for `portfolio fetch/daily` without --csv
+export ETORO_API_KEY=...        # eToro application key, only for `portfolio fetch/daily` without --csv
+export ETORO_USER_KEY=...       # eToro user key, paired with the application key
 ```
 
 **5. Live preflight** (costs well under $0.01):
@@ -78,7 +79,7 @@ Cash,CASH,cash,500,1,1
 
 ```bash
 # Each trading day: freeze today's snapshot (free), then run the adopted bundle once (paid)
-uv run harness-clone portfolio fetch --csv ~/portfolio.csv          # or omit --csv to use ETORO_API_KEY
+uv run harness-clone portfolio fetch --csv ~/portfolio.csv          # or omit --csv to use your eToro keys
 uv run harness-clone portfolio daily --max-usd 2                    # writes runs/portfolio/<date>/report.md and recommendations.json
 
 # Once a week, after the week's dailies: evolve the bundle (paid), then score matured calls (free)
@@ -105,7 +106,7 @@ scripts/start-backend.sh --demo   # API on http://127.0.0.1:8765, serving runs/p
 scripts/start-frontend.sh      # UI on http://127.0.0.1:5173
 ```
 
-Drop `--demo` from `start-backend.sh` to work on your real `runs/portfolio`. `setup.sh --no-docker` skips the image build if you only want to browse. The backend reads `FIREWORKS_API_KEY` and `ETORO_API_KEY` from the shell you start it in, and the UI shows only whether each key is set.
+Drop `--demo` from `start-backend.sh` to work on your real `runs/portfolio`. `setup.sh --no-docker` skips the image build if you only want to browse. The backend reads `FIREWORKS_API_KEY`, `ETORO_API_KEY` and `ETORO_USER_KEY` from the shell you start it in, and the UI shows only whether each key is set.
 
 What's on screen:
 
@@ -164,12 +165,18 @@ Live doctor checks cover a tool round trip, structured JSON, streaming, and usag
 
 The portfolio commands analyse a frozen daily snapshot of an eToro portfolio and produce research recommendations for the account holder's manual review. **They never place, modify, or cancel orders** — there is no order-placement code path; the only outputs are `recommendations.json` and a human-readable `report.md` per snapshot.
 
-Set both keys in the **host environment only**; the application does not load `.env`, and keys must never enter task sources, candidate bundles, snapshots, or committed files:
+Set keys in the **host environment only**; the application does not load `.env`, and keys must never enter task sources, candidate bundles, snapshots, or committed files:
 
 ```bash
-export ETORO_API_KEY=...       # eToro public API (portfolio fetch)
 export FIREWORKS_API_KEY=...   # Fireworks (model execution in daily/evolve)
+export ETORO_API_KEY=...       # eToro Public API application key  } only needed to fetch
+export ETORO_USER_KEY=...      # eToro Public API user key         } without --csv
+export ETORO_ENVIRONMENT=real  # optional: real (default) or demo
 ```
+
+**Getting eToro keys.** Sign in at [api-portal.etoro.com](https://api-portal.etoro.com), open *Settings → Trading → API Key Management*, and create a key with **Read** permission for the environment you want (Real or Demo; each key works for one). You get two values: the public **API key** (`ETORO_API_KEY`) and the **user key** (`ETORO_USER_KEY`), which is shown only once. A read-only key is enough, since the agent never trades.
+
+How the fetch works: it reads `GET /api/v1/trading/info/{real|demo}/pnl` for holdings and cash, then `GET /api/v1/market-data/instruments` to turn instrument ids into tickers and asset classes. Every request carries both keys plus a fresh `x-request-id`. Lots of one instrument are merged, and copy-trading positions and the cash reserved inside a copy count as holdings. Stocks, ETFs and crypto are supported. The fetch aborts with a named error, rather than writing a partial portfolio, if the account holds a short or leveraged position or another instrument type (forex, commodities, indices, CFDs), or if the account currency isn't USD. In that case export the supported holdings and use `--csv`.
 
 Commands (from the repository root; `--base-dir` defaults to `runs/portfolio`):
 
@@ -199,7 +206,7 @@ Layout under `--base-dir` (all gitignored):
 
 **Privacy:** everything under `runs/` is gitignored. Snapshots contain your holdings, so keep `runs/portfolio` (and any CSV export or scoreboard) out of version control and treat snapshot directories as private financial data.
 
-**Status — read before trusting any output:** live portfolio runs are **unverified**. The underlying live harness run is verified (21 October 2026), but no paid `daily`/`evolve` run has been performed yet. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
+**Status — read before trusting any output:** live portfolio runs are **unverified**. The underlying live harness run is verified (21 October 2026), but no paid `daily`/`evolve` run has been performed yet. The eToro client follows the published Public API spec (auth headers, PnL and instruments schemas), but no fetch with real keys has been run yet; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
 
 **Operations after setup:** run `portfolio daily` each trading day and `portfolio evolve` + `portfolio score` weekly (scheduling via cron/launchd is your choice). Treat the first **4-week forward soak** (spec milestone 5) as an operational phase, not a code milestone: collect daily recommendations and matured scores for four weeks, review the scoreboard by hand, and only then let the reports inform any manual decision — made by you, outside this tool.
 
@@ -284,7 +291,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv sync --frozen
    npm ci --prefix workers/pi
    uv run ruff check .
-   uv run pytest -q            # expect 244 passed, 3 skipped
+   uv run pytest -q            # expect 261 passed, 3 skipped
    npm test --prefix workers/pi
    npm run build --prefix workers/pi
    ```

@@ -1,0 +1,7 @@
+{
+  "instrumentDisplayDatas": [
+    {"instrumentID": 1001, "instrumentDisplayName": "Apple", "instrumentTypeID": 5, "symbolFull": "AAPL"},
+    {"instrumentID": 3006, "instrumentDisplayName": "Invesco QQQ", "instrumentTypeID": 6, "symbolFull": "QQQ"},
+    {"instrumentID": 100000, "instrumentDisplayName": "Bitcoin", "instrumentTypeID": 10, "symbolFull": "BTC"}
+  ]
+}

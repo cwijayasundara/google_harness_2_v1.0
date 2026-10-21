@@ -226,7 +226,7 @@ def create_app(
             "docker": shutil.which("docker") is not None,
             "keys": {
                 "fireworks": bool(os.environ.get("FIREWORKS_API_KEY")),
-                "etoro": bool(os.environ.get("ETORO_API_KEY")),
+                "etoro": bool(os.environ.get("ETORO_API_KEY") and os.environ.get("ETORO_USER_KEY")),
             },
             "max_ui_usd": str(MAX_UI_USD),
             "job_running": (jobs.running() or {}).get("id"),

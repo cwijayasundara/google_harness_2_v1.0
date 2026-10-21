@@ -6,7 +6,8 @@
 #   scripts/setup.sh --demo     also seed synthetic demo data in runs/portfolio-demo
 #   scripts/setup.sh --no-docker  skip building container images
 #
-# Never writes credentials. Export FIREWORKS_API_KEY / ETORO_API_KEY in your
+# Never writes credentials. Export FIREWORKS_API_KEY (and ETORO_API_KEY +
+# ETORO_USER_KEY to fetch without a CSV) in your
 # own shell before starting the backend.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -64,7 +65,8 @@ step "Done"
 cat <<MSG
 Next:
   export FIREWORKS_API_KEY=...   # needed for paid daily/evolve runs
-  export ETORO_API_KEY=...       # optional; otherwise fetch from a CSV
+  export ETORO_API_KEY=...       # optional, with ETORO_USER_KEY; otherwise fetch from a CSV
+  export ETORO_USER_KEY=...
   scripts/start-backend.sh$( [ "$DEMO" = 1 ] && echo " --demo" )
   scripts/start-frontend.sh      # then open http://127.0.0.1:5173
 MSG

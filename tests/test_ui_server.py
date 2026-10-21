@@ -64,9 +64,13 @@ def wait(c, job_id):
 
 def test_status_reports_key_presence_without_values(tmp_path, monkeypatch):
     monkeypatch.setenv("FIREWORKS_API_KEY", "fw-secret-value")
-    monkeypatch.delenv("ETORO_API_KEY", raising=False)
+    monkeypatch.setenv("ETORO_API_KEY", "app-key")
+    monkeypatch.delenv("ETORO_USER_KEY", raising=False)
     body = client(tmp_path).get("/api/status")
+    # The eToro route needs both keys, so one alone does not count as configured.
     assert body.json()["keys"] == {"fireworks": True, "etoro": False}
+    monkeypatch.setenv("ETORO_USER_KEY", "user-key")
+    assert client(tmp_path).get("/api/status").json()["keys"]["etoro"] is True
     assert "fw-secret-value" not in body.text
 
 

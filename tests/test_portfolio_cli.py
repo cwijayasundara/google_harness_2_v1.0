@@ -1,6 +1,8 @@
 import json
 from datetime import date
 
+import pytest
+
 
 def test_portfolio_daily_requires_cap(capsys):
     from harness_clone.cli import main
@@ -39,8 +41,23 @@ def test_portfolio_fetch_requires_csv_or_etoro_key(tmp_path, monkeypatch, capsys
     from harness_clone.cli import main
 
     monkeypatch.delenv("ETORO_API_KEY", raising=False)
+    monkeypatch.delenv("ETORO_USER_KEY", raising=False)
     assert main(["portfolio", "fetch", "--base-dir", str(tmp_path / "portfolio")]) == 2
-    capsys.readouterr()
+    assert "ETORO_API_KEY" in capsys.readouterr().err
+
+
+def test_etoro_http_errors_are_named_without_leaking_keys(monkeypatch):
+    import httpx
+
+    import harness_clone.cli as cli
+
+    def fake_get(url, headers, timeout):
+        return httpx.Response(401, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    with pytest.raises(ValueError, match="rejected the keys") as err:
+        cli._etoro_get("https://x/api?instrumentIds=1", {"x-api-key": "SECRET", "x-user-key": "S2"})
+    assert "SECRET" not in str(err.value) and "instrumentIds" not in str(err.value)
 
 
 def test_portfolio_fetch_with_csv_builds_snapshot(tmp_path, monkeypatch, capsys):
@@ -237,9 +254,7 @@ def test_portfolio_fetch_warns_on_partial_universe(tmp_path, monkeypatch, capsys
 
     def fake_fetch_task(base, day, portfolio, provider, **kwargs):
         missing = {"count": 2, "sample": ["MSFT", "USDT"], "sources_unavailable": []}
-        return build_snapshot_task(
-            base, day, portfolio, {}, [], 6, [], universe_missing=missing
-        )
+        return build_snapshot_task(base, day, portfolio, {}, [], 6, [], universe_missing=missing)
 
     monkeypatch.setattr(cli, "fetch_task", fake_fetch_task)
     argv = ["portfolio", "fetch", "--base-dir", str(tmp_path / "p"), "--date", "2026-10-21"]
@@ -332,9 +347,7 @@ def test_portfolio_score_prices_top100_coin_via_persisted_id(tmp_path, monkeypat
     import harness_clone.cli as cli
 
     requested: list[str] = []
-    run_dir = _score_run(
-        tmp_path, [_crypto_rec("HYPE")], {"HYPE": "hyperliquid", "BTC": "bitcoin"}
-    )
+    run_dir = _score_run(tmp_path, [_crypto_rec("HYPE")], {"HYPE": "hyperliquid", "BTC": "bitcoin"})
     monkeypatch.setattr(cli, "live_price_provider", lambda: _coingecko_provider(requested))
     out = tmp_path / "sb.json"
     argv = ["portfolio", "score", "--run-dir", str(run_dir), "--scoreboard", str(out)]

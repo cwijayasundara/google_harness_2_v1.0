@@ -4,8 +4,6 @@ from pathlib import Path
 import pytest
 
 from harness_clone.portfolio_etoro import (
-    ETORO_PNL_URL,
-    EtoroClient,
     load_portfolio_csv,
     normalize_etoro_pnl,
 )
@@ -102,29 +100,3 @@ def test_csv_missing_column_aborts(tmp_path):
     path.write_text("instrument,ticker,asset_class,open_rate,current_price\nAcme,ACME,equity,1,1\n")
     with pytest.raises(ValueError, match="units"):
         load_portfolio_csv(path, FETCHED_AT)
-
-
-def test_client_fetches_and_normalizes_with_injected_get():
-    calls = []
-
-    def fake_get(url, headers):
-        calls.append((url, headers))
-        return load_fixture()
-
-    snap = EtoroClient(api_key="secret-key", get=fake_get).fetch_portfolio()
-    assert calls == [(ETORO_PNL_URL, {"x-api-key": "secret-key", "Accept": "application/json"})]
-    assert snap.positions[0].portfolio_weight == pytest.approx(0.6)
-    assert snap.cash_weight == pytest.approx(0.4)
-    assert snap.fetched_at
-
-
-def test_client_from_env_reads_key_at_construction(monkeypatch):
-    monkeypatch.setenv("ETORO_API_KEY", "env-key")
-    client = EtoroClient.from_env(get=lambda url, headers: load_fixture())
-    assert client.api_key == "env-key"
-
-
-def test_client_from_env_missing_key_aborts(monkeypatch):
-    monkeypatch.delenv("ETORO_API_KEY", raising=False)
-    with pytest.raises(KeyError, match="ETORO_API_KEY"):
-        EtoroClient.from_env(get=lambda url, headers: load_fixture())

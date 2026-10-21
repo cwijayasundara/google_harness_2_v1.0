@@ -96,7 +96,7 @@ export function MissionControl({ status, selectedDate, onJobFinished }: Props) {
                 <button
                   aria-pressed={source === "etoro"}
                   onClick={() => setSource("etoro")}
-                  title={status?.keys.etoro ? "" : "ETORO_API_KEY is not set in the backend's environment"}
+                  title={status?.keys.etoro ? "" : "Set ETORO_API_KEY and ETORO_USER_KEY in the backend's environment"}
                 >
                   eToro API {status?.keys.etoro ? "" : "(no key)"}
                 </button>
