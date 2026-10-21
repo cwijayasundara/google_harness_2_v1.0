@@ -16,7 +16,7 @@ from .contracts import (
     TaskSpec,
 )
 from .evidence import build_evidence, read_sources, validate_refs
-from .storage import RunStore, fingerprint
+from .storage import BudgetLedger, RunStore, fingerprint
 
 
 class Executor(Protocol):
@@ -65,6 +65,25 @@ def run_task(
         return result
     result = TaskResult(task_id=task.id)
     trees = {"base": base_digest}
+    # Reserve every planned phase up front so proposals cannot starve the
+    # later composition and final execution phases. Offline runs (cap 0)
+    # allocate nothing.
+    ledger = (
+        BudgetLedger(store.root / "budget.sqlite", config.max_usd) if config.max_usd > 0 else None
+    )
+    if ledger is not None:
+        compose_label = "agg" if config.mode == "parallel" else "c"
+        planned = (
+            [f"base{i}" for i in range(1, config.k + 1)]
+            + [f"{scope}{i}" for i in range(1, config.k + 1) for scope in ("inv", "dom")]
+            + [f"{compose_label}{i}" for i in range(1, config.k + 1)]
+        )
+        for label in planned:
+            ledger.allocate(f"{prefix}/{label}", config.stage_usd)
+
+    def release(label):
+        if ledger is not None:
+            ledger.release(f"{prefix}/{label}")
 
     def roll(label, digest):
         eid = f"{prefix}/{label}"
@@ -79,25 +98,28 @@ def run_task(
                 raise ValueError("executor returned mismatched execution identity")
             store.save_execution(record)
         result.executions[label] = record
+        release(label)
         return record
 
-    def edit(label, scope, parent):
+    def edit(label, scope, parent, decisions=None):
         key = f"{prefix}/{label}"
         saved = store.get("edit", key)
         if saved:
             validate_bundle(store.bundle_path(saved["digest"]), config)
             trees[label] = saved["digest"]
             result.stages.append(saved)
+            release(label)
             return
         evidence = build_evidence(task, list(result.executions.values()), library)
         error = ""
         status = "fallback"
         digest = parent
         rationale = ""
+        frozen = list(result.stages) if decisions is None else decisions
         for attempt in range(2):
             try:
                 if hasattr(editor, "set_stage"):
-                    editor.set_stage(key, attempt, error, result.stages)
+                    editor.set_stage(key, attempt, error, frozen)
                 proposal = editor.propose(scope, parent, evidence)
                 if proposal.patch.parent_digest != parent:
                     raise ValueError("proposal parent mismatch")
@@ -129,6 +151,7 @@ def run_task(
         store.put("edit", key, saved)
         trees[label] = digest
         result.stages.append(saved)
+        release(label)
 
     def references(state):
         for i in range(1, config.k + 1):
@@ -139,11 +162,13 @@ def run_task(
 
     def proposals(state):
         rounds = range(1, config.k + 1) if config.mode == "parallel" else [state["round"]]
+        # Sibling proposals must not see each other's stages; COMPOSE gets them.
+        frozen = list(result.stages)
         labels = []
         for i in rounds:
             for scope in ["INV", "DOM"]:
                 label = f"{scope.lower()}{i}"
-                edit(label, scope, state["current"])
+                edit(label, scope, state["current"], frozen)
                 labels.append(label)
         return {"proposals": labels}
 
@@ -158,8 +183,9 @@ def run_task(
             if config.mode == "parallel"
             else [f"c{state['round']}"]
         )
+        frozen = list(result.stages)
         for label in labels:
-            edit(label, "COMPOSE", state["current"])
+            edit(label, "COMPOSE", state["current"], frozen)
         return {"compositions": labels}
 
     def finals(state):

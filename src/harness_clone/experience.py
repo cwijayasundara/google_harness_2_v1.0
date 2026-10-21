@@ -53,16 +53,29 @@ class ExperienceLibrary:
         return EvidenceSnapshot(digest=fingerprint(data), task_id="library", library=data)
 
 
+def stream_signature(tasks) -> str:
+    return fingerprint(
+        [{"task": t.model_dump(mode="json"), "sources": read_sources(t)} for t in tasks]
+    )
+
+
+def check_stream(store, tasks, base_digest, *, learn=True) -> None:
+    """Reject changed stream inputs before any caller persists new metadata."""
+    previous = store.get("stream", "signature")
+    if previous and previous != {
+        "signature": stream_signature(tasks),
+        "learn": learn,
+        "base": base_digest,
+    }:
+        raise ValueError("stream inputs changed; use a new run directory")
+
+
 def run_stream(
     tasks, config, store, executor, editor_factory, base_digest, *, learn=True, workers=1
 ):
     store.create_experiment(config)
-    signature = fingerprint(
-        [{"task": t.model_dump(mode="json"), "sources": read_sources(t)} for t in tasks]
-    )
-    previous = store.get("stream", "signature")
-    if previous and previous != {"signature": signature, "learn": learn, "base": base_digest}:
-        raise ValueError("stream inputs changed; use a new run directory")
+    signature = stream_signature(tasks)
+    check_stream(store, tasks, base_digest, learn=learn)
     store.put("stream", "signature", {"signature": signature, "learn": learn, "base": base_digest})
     namespace = fingerprint({"config": config.model_dump(mode="json"), "base": base_digest})
     lib = ExperienceLibrary(store)

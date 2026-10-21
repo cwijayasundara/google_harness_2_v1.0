@@ -11,11 +11,44 @@ from pathlib import Path
 import httpx
 
 from .bundles import read_files
-from .contracts import EditProposal, HarnessPatch
+from .contracts import PI_IMAGE, EditProposal, HarnessPatch
 from .editors import DeepAgentEditor
 from .evidence import read_sources
+from .gateway import stage_group
 from .pi_client import PiClient
-from .storage import fingerprint
+from .storage import BudgetLedger, fingerprint
+
+
+def _docker_call(run, args):
+    try:
+        return run(args)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"docker {' '.join(args[:2])} failed: {exc.stderr or exc}") from exc
+
+
+def _checked(run, args):
+    result = _docker_call(run, args)
+    if result.returncode:
+        raise RuntimeError(
+            f"docker {' '.join(args[:2])} failed: {(result.stderr or '').strip()[:300]}"
+        )
+    return result
+
+
+def ensure_network(run, name: str) -> None:
+    if _docker_call(run, ["network", "inspect", name]).returncode != 0:
+        _checked(run, ["network", "create", "--internal", name])
+
+
+def ensure_container(run, name: str, create_args: list[str]) -> bool:
+    """Reuse a running container; recreate a stopped one. Returns True if reused."""
+    inspect = _docker_call(run, ["inspect", "--format", "{{.State.Running}}", name])
+    if inspect.returncode == 0:
+        if (inspect.stdout or "").strip() == "true":
+            return True
+        _docker_call(run, ["rm", "-f", name])
+    _checked(run, list(create_args))
+    return False
 
 
 class PiEditor(DeepAgentEditor):
@@ -91,16 +124,32 @@ class PiEditor(DeepAgentEditor):
     def _launch_edit(self, work: Path, job: dict):
         suffix = job["request_id"][:16]
         network, gateway, worker = f"hc-pi-net-{suffix}", f"hc-pi-gw-{suffix}", f"hc-pi-{suffix}"
-        gateway_token, worker_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        stage_id = self.stage or job["request_id"]
+        # Persist scoped credentials before launching so a resume after
+        # controller death can reconnect to resources that are still running.
+        session = self.store.get("pi-session", job["request_id"]) or {}
+        gateway_token = session.get("gateway_token") or secrets.token_urlsafe(32)
+        worker_token = session.get("worker_token") or secrets.token_urlsafe(32)
+        self.store.put(
+            "pi-session",
+            job["request_id"],
+            {
+                "gateway_token": gateway_token,
+                "worker_token": worker_token,
+                "network": network,
+                "gateway": gateway,
+                "worker": worker,
+            },
+        )
 
-        def docker(args):
-            return subprocess.run(
-                ["docker", *args], capture_output=True, text=True, timeout=30, check=True
-            )
+        def run(args):
+            return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
 
         try:
-            docker(["network", "create", "--internal", network])
-            docker(
+            ensure_network(run, network)
+            reused_gateway = ensure_container(
+                run,
+                gateway,
                 [
                     "run",
                     "-d",
@@ -115,7 +164,7 @@ class PiEditor(DeepAgentEditor):
                     "--env",
                     f"HARNESS_GATEWAY_TOKEN={gateway_token}",
                     "--env",
-                    f"HARNESS_STAGE_ID={job['request_id']}",
+                    f"HARNESS_STAGE_ID={stage_id}",
                     "--mount",
                     f"type=bind,src={self.store.root},dst=/ledger",
                     "--mount",
@@ -124,10 +173,14 @@ class PiEditor(DeepAgentEditor):
                     "python",
                     "-m",
                     "harness_clone.gateway",
-                ]
+                ],
             )
-            docker(["network", "connect", network, gateway])
-            docker(
+            connect = run(["network", "connect", network, gateway])
+            if not reused_gateway and connect.returncode:
+                raise RuntimeError("docker network connect failed for Pi gateway")
+            ensure_container(
+                run,
+                worker,
                 [
                     "run",
                     "-d",
@@ -160,15 +213,18 @@ class PiEditor(DeepAgentEditor):
                     f"type=bind,src={work / 'context'},dst=/context,readonly",
                     "--mount",
                     f"type=bind,src={work / 'data'},dst=/data",
-                    "harness-clone-pi:0.1",
-                ]
+                    PI_IMAGE,
+                ],
             )
-            address = docker(["port", worker, "8081/tcp"]).stdout.strip()
+            address = _checked(run, ["port", worker, "8081/tcp"]).stdout.strip()
             with httpx.Client(timeout=5) as http:
                 client = PiClient(f"http://{address}", http, worker_token)
                 deadline = time.monotonic() + min(30, self.config.timeout_seconds)
                 while True:
                     try:
+                        # Pi admission is idempotent by request_id: resubmitting
+                        # after a lost response or controller death returns the
+                        # same job instead of starting a second edit.
                         admitted = client.submit(job)
                         break
                     except httpx.TransportError:
@@ -185,3 +241,9 @@ class PiEditor(DeepAgentEditor):
             for name in [worker, gateway]:
                 subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
             subprocess.run(["docker", "network", "rm", network], capture_output=True, timeout=30)
+            try:
+                BudgetLedger(self.store.root / "budget.sqlite", self.config.max_usd).mark_unknown(
+                    stage_group(stage_id)
+                )
+            except (OSError, ValueError):
+                pass

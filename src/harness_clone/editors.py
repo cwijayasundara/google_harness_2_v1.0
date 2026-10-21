@@ -15,9 +15,9 @@ from pydantic import Field
 from .bundles import read_files
 from .contracts import EditProposal, ExperimentConfig, Record, TaskSpec
 from .evidence import read_sources
-from .gateway import gateway_server
+from .gateway import gateway_server, stage_group
 from .providers import make_model
-from .storage import RunStore, fingerprint
+from .storage import BudgetLedger, RunStore, fingerprint
 
 
 class Choice(Record):
@@ -48,11 +48,12 @@ class DeepAgentEditor:
         if self.config.max_usd <= 0:
             raise ValueError("live editing requires a nonzero spending cap")
         token = secrets.token_urlsafe(32)
+        stage_id = self.stage or role + "/" + fingerprint(context)
         server = gateway_server(
             self.config,
             self.store.root / "budget.sqlite",
             token,
-            stage_id=self.stage or role + "/" + fingerprint(context),
+            stage_id=stage_id,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -89,6 +90,14 @@ class DeepAgentEditor:
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+            # This gateway is definitively stopped; any request it admitted but
+            # never settled is unknown billing, not a pending estimate.
+            try:
+                BudgetLedger(self.store.root / "budget.sqlite", self.config.max_usd).mark_unknown(
+                    stage_group(stage_id)
+                )
+            except (OSError, ValueError):
+                pass
 
     def propose(self, scope, parent_digest, evidence):
         instructions = {

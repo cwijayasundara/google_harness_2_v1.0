@@ -184,3 +184,14 @@ class DockerExecutor:
             for name in [worker, gateway]:
                 subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
             subprocess.run(["docker", "network", "rm", network], capture_output=True, timeout=30)
+            # The gateway container is definitively stopped; unsettled requests
+            # it admitted are unknown billing, not pending estimates.
+            try:
+                execution_id = json.loads((work / "control/request.json").read_text())[
+                    "execution_id"
+                ]
+                BudgetLedger(self.store.root / "budget.sqlite", self.config.max_usd).mark_unknown(
+                    execution_id
+                )
+            except (OSError, ValueError, KeyError):
+                pass

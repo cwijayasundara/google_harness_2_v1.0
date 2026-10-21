@@ -128,34 +128,118 @@ class RunStore(Database):
         return record
 
 
+ALLOC_PREFIX = "alloc:"
+
+
 class BudgetLedger(Database):
     def __init__(self, path: Path, cap: Decimal):
         super().__init__(path)
         self.cap = cap
         with self.transaction() as db:
             db.execute(
-                "CREATE TABLE IF NOT EXISTS budget (id TEXT PRIMARY KEY, ceiling TEXT NOT NULL, usage TEXT)"
+                "CREATE TABLE IF NOT EXISTS budget (id TEXT PRIMARY KEY, ceiling TEXT NOT NULL, usage TEXT, allocation TEXT)"
             )
+            columns = {row[1] for row in db.execute("PRAGMA table_info(budget)")}
+            if "allocation" not in columns:
+                db.execute("ALTER TABLE budget ADD COLUMN allocation TEXT")
 
-    def reserve(self, stage_id: str, ceiling_usd: Decimal) -> None:
+    @staticmethod
+    def _rows(db):
+        return db.execute("SELECT id,ceiling,usage,allocation FROM budget").fetchall()
+
+    @staticmethod
+    def _cap_total(rows) -> Decimal:
+        # Allocation rows count once at their ceiling (or settled actuals after
+        # release); requests drawn on an allocation never count a second time.
+        total = Decimal(0)
+        for name, ceiling, encoded, allocation in rows:
+            usage = Usage.model_validate_json(encoded) if encoded else None
+            if usage and not usage.known:
+                raise ValueError("unknown provider usage blocks further paid work")
+            if name.startswith(ALLOC_PREFIX) or not allocation:
+                total += usage.usd if usage else Decimal(ceiling)
+        return total
+
+    def allocate(self, allocation_id: str, amount: Decimal) -> None:
+        """Reserve a phase budget (one stage) against the experiment cap."""
+        if amount <= 0:
+            raise ValueError("allocation must be positive")
+        key = ALLOC_PREFIX + allocation_id
+        with self.transaction() as db:
+            rows = self._rows(db)
+            for name, ceiling, _, _ in rows:
+                if name == key:
+                    if Decimal(ceiling) != amount:
+                        raise ValueError("allocation amount changed")
+                    return
+            if self._cap_total(rows) + amount > self.cap:
+                raise ValueError("experiment spending cap exhausted by phase allocations")
+            db.execute("INSERT INTO budget VALUES(?,?,NULL,NULL)", (key, str(amount)))
+
+    def release(self, allocation_id: str) -> None:
+        """Settle a finished phase allocation at its actual stage spend."""
+        key = ALLOC_PREFIX + allocation_id
+        with self.transaction() as db:
+            rows = self._rows(db)
+            alloc = next((r for r in rows if r[0] == key), None)
+            if alloc is None or alloc[2]:
+                return
+            spent = [
+                Usage.model_validate_json(r[2]) for r in rows if r[3] == allocation_id and r[2]
+            ]
+            pending = any(r[3] == allocation_id and not r[2] for r in rows)
+            usage = Usage(
+                input_tokens=sum(u.input_tokens for u in spent),
+                cached_tokens=sum(u.cached_tokens for u in spent),
+                output_tokens=sum(u.output_tokens for u in spent),
+                usd=sum((u.usd for u in spent), Decimal(0)),
+                known=not pending and all(u.known for u in spent),
+            )
+            db.execute("UPDATE budget SET usage=? WHERE id=?", (usage.model_dump_json(), key))
+
+    def reserve(
+        self, stage_id: str, ceiling_usd: Decimal, allocation_id: str | None = None
+    ) -> None:
         if ceiling_usd <= 0:
             raise ValueError("reservation must be positive")
         with self.transaction() as db:
-            rows = db.execute("SELECT id,ceiling,usage FROM budget").fetchall()
-            for name, ceiling, usage in rows:
+            rows = self._rows(db)
+            for name, ceiling, _, _ in rows:
                 if name == stage_id:
                     if Decimal(ceiling) != ceiling_usd:
                         raise ValueError("reservation amount changed")
                     return
-            total = Decimal(0)
-            for _, ceiling, encoded in rows:
-                usage = Usage.model_validate_json(encoded) if encoded else None
-                if usage and not usage.known:
-                    raise ValueError("unknown provider usage blocks further paid work")
-                total += usage.usd if usage else Decimal(ceiling)
-            if total + ceiling_usd > self.cap:
-                raise ValueError("experiment spending cap exhausted")
-            db.execute("INSERT INTO budget VALUES(?,?,NULL)", (stage_id, str(ceiling_usd)))
+            total = self._cap_total(rows)
+            if allocation_id is None:
+                if total + ceiling_usd > self.cap:
+                    raise ValueError("experiment spending cap exhausted")
+            else:
+                alloc = next((r for r in rows if r[0] == ALLOC_PREFIX + allocation_id), None)
+                if alloc is None:
+                    raise ValueError("phase allocation missing for stage request")
+                stage_total = Decimal(0)
+                for _, ceiling, encoded, allocation in rows:
+                    if allocation != allocation_id:
+                        continue
+                    usage = Usage.model_validate_json(encoded) if encoded else None
+                    stage_total += usage.usd if usage else Decimal(ceiling)
+                if stage_total + ceiling_usd > Decimal(alloc[1]):
+                    raise ValueError("stage spending ceiling exceeded")
+            db.execute(
+                "INSERT INTO budget VALUES(?,?,NULL,?)",
+                (stage_id, str(ceiling_usd), allocation_id),
+            )
+
+    def mark_unknown(self, stage_prefix: str) -> None:
+        """Convert a definitively stopped gateway's pending requests to unknown."""
+        with self.transaction() as db:
+            rows = db.execute("SELECT id FROM budget WHERE usage IS NULL").fetchall()
+            for (name,) in rows:
+                if name == stage_prefix or name.startswith(stage_prefix + "/"):
+                    db.execute(
+                        "UPDATE budget SET usage=? WHERE id=?",
+                        (Usage(known=False).model_dump_json(), name),
+                    )
 
     def settle(self, stage_id: str, usage: Usage) -> None:
         with self.transaction() as db:
@@ -168,12 +252,21 @@ class BudgetLedger(Database):
 
     def summary(self) -> dict:
         with self.transaction() as db:
-            rows = db.execute("SELECT ceiling,usage FROM budget").fetchall()
-        usages = [Usage.model_validate_json(u) for _, u in rows if u]
+            rows = self._rows(db)
+        spent_rows = [r for r in rows if r[2] and not r[0].startswith(ALLOC_PREFIX)]
+        usages = [Usage.model_validate_json(r[2]) for r in spent_rows]
+        reserved = sum(
+            (
+                Decimal(r[1])
+                for r in rows
+                if not r[2] and (r[0].startswith(ALLOC_PREFIX) or not r[3])
+            ),
+            Decimal(0),
+        )
         return {
             "cap": str(self.cap),
             "spent": str(sum((u.usd for u in usages), Decimal(0))),
-            "reserved": str(sum((Decimal(c) for c, u in rows if not u), Decimal(0))),
+            "reserved": str(reserved),
             "unknown": any(not u.known for u in usages),
         }
 

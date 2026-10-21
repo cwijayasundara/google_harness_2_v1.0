@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MODEL = "accounts/fireworks/models/deepseek-v4p1-flash"
+PI_IMAGE = "harness-clone-pi:0.1"
 COMPONENTS = (
     "system",
     "guardrails",
@@ -45,6 +46,8 @@ class ExperimentConfig(Record):
     timeout_seconds: int = Field(default=180, ge=1, le=3600)
     max_memory_mb: int = Field(default=1024, ge=256)
     image: str = "harness-clone-executor:0.1"
+    image_id: str = ""
+    pi_image_id: str = ""
     library_snapshot: str = "empty"
     harness_profile: str = "harness-clone-v1"
     editor_policy: Literal["text", "pi"] = "text"

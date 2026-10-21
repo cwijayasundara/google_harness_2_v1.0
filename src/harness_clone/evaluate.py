@@ -46,6 +46,10 @@ def evaluate(store, expectations: dict, output: Path) -> dict:
     # Avoid overwriting online storage or task evidence with hidden expectations/results.
     if output.is_relative_to(store.root):
         raise ValueError("evaluation output must be outside the online run directory")
+    for task in store.get("runtime", "tasks") or []:
+        source_root = Path(task["source_root"]).resolve()
+        if output.is_relative_to(source_root):
+            raise ValueError("evaluation output must be outside every task source directory")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2))
     return report

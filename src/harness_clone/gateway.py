@@ -15,6 +15,11 @@ from .providers import normalize_usage
 from .storage import BudgetLedger
 
 
+def stage_group(stage_id: str) -> str:
+    """Repair attempts of one stage share its ceiling: strip /attempt-N."""
+    return stage_id.rsplit("/attempt-", 1)[0] if "/attempt-" in stage_id else stage_id
+
+
 class InferenceGateway:
     def __init__(
         self, config: ExperimentConfig, ledger: BudgetLedger, token: str, stage_id: str = "request"
@@ -74,7 +79,9 @@ class InferenceGateway:
             + Decimal(payload["max_tokens"]) * Decimal("1.20")
         ) / Decimal(1000000)
         identity = self.stage_id + "/" + str(uuid.uuid4())
-        self.ledger.reserve(identity, ceiling)
+        group = stage_group(self.stage_id)
+        self.ledger.allocate(group, self.config.stage_usd)
+        self.ledger.reserve(identity, ceiling, allocation_id=group)
         return identity, payload
 
     def finish(self, identity: str, response: dict):

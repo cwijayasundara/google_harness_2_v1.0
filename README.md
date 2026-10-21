@@ -6,7 +6,7 @@ The optimizer versions system prompts, guardrails, memory, tool guidance, subage
 
 ## Status
 
-The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution and live Fireworks/Pi compatibility are **not yet verified**. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
+The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution is verified by the explicitly enabled Docker tests (read-only/non-root/no-public-egress isolation and a real Deep Agents graph executing a candidate script in a container). Live Fireworks/Pi compatibility over the real provider is **not yet verified**; no paid model calls have been performed. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
 
 ## Install and try the offline demo
 
