@@ -6,7 +6,94 @@ The optimizer versions system prompts, guardrails, memory, tool guidance, subage
 
 ## Status
 
-The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution is verified by the explicitly enabled Docker tests (read-only/non-root/no-public-egress isolation and a real Deep Agents graph executing a candidate script in a container). Live Fireworks preflight (tool round trip, streaming, structured output, usage metadata) passes against the real provider. A complete live experiment run is **not yet verified**: the baseline container execution currently fails with a gateway rejection before budget reservation, and complete Pi code-edit behavior over the real provider is also unverified. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
+The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution is verified by the explicitly enabled Docker tests (read-only/non-root/no-public-egress isolation and a real Deep Agents graph executing a candidate script in a container). Live Fireworks preflight (tool round trip, streaming, structured output, usage metadata) passes against the real provider, and one complete live experiment run (text editor, k=1) was verified on 21 October 2026: all four executions delivered and the offline evaluation passed, for about $0.08. Complete Pi code-edit behavior over the real provider and live portfolio runs are still unverified. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
+
+## How to run
+
+A step-by-step path from a fresh clone to a live run. Steps 1–4 are free; steps 5–7 make paid Fireworks calls (except `portfolio fetch` and `portfolio score`) and need a spending cap you choose. Run everything from the repository root.
+
+**1. Install** (Python 3.12, [uv](https://docs.astral.sh/uv/), Node >= 22.19.0, Docker Desktop or another Docker daemon):
+
+```bash
+uv sync --frozen
+npm ci --prefix workers/pi
+```
+
+**2. Check the install offline** (no Docker, network, or key needed):
+
+```bash
+uv run ruff check .
+uv run pytest -q                       # expect 222 passed, 3 skipped
+uv run harness-clone doctor            # offline environment report
+uv run harness-clone demo --run-dir runs/demo-parallel --mode parallel --k 2
+uv run harness-clone inspect --run-dir runs/demo-parallel
+```
+
+**3. Build the container images and check isolation** (Docker running; still free). Rebuild after any source change. Live runs pin image IDs, so a rebuilt image needs a fresh `--run-dir`:
+
+```bash
+docker compose -f containers/compose.yaml --profile build build
+HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 3 passed
+```
+
+**4. Set credentials in your shell** (host environment only; the app never reads `.env`):
+
+```bash
+export FIREWORKS_API_KEY=...    # required for every paid command
+export ETORO_API_KEY=...        # only for `portfolio fetch/daily` without --csv
+```
+
+**5. Live preflight** (costs well under $0.01):
+
+```bash
+uv run harness-clone doctor --live --max-usd 2    # expect "status": "live-pass"
+```
+
+**6. Run a harness-optimization experiment** on the example task, then score it offline:
+
+```bash
+uv run harness-clone run \
+  --task examples/tasks/summary/task.json \
+  --base-harness examples/base-harness \
+  --run-dir runs/live-summary \
+  --mode parallel --k 1 --profile research \
+  --editor-policy text --max-usd 2
+uv run harness-clone inspect --run-dir runs/live-summary   # expect "errors": [] and recorded spend
+
+echo '{"summary": {"answer.json": {"count": 3, "total": 10}}}' > /tmp/expectations.json
+uv run harness-clone evaluate --run-dir runs/live-summary \
+  --expectations /tmp/expectations.json --output /tmp/live-results.json
+```
+
+Use `--task` more than once for a multi-task stream, `--k` to widen the search, `--mode sequential` to carry each composed harness forward, and `--editor-policy pi` (the default) to let Pi Durable make code-bearing edits. Re-running the same command resumes; `uv run harness-clone resume --run-dir runs/live-summary` replays nothing that already finished.
+
+**7. Run the portfolio agent** (recommendations only; see [Portfolio agent](#portfolio-agent-recommendations-only) for the full layout and safety notes). With no eToro key, start from a CSV export using this exact header. A row with `asset_class` `cash` is your cash balance (`units × current_price`):
+
+```csv
+instrument,ticker,asset_class,units,open_rate,current_price
+Apple Inc,AAPL,equity,10,150.00,190.00
+Bitcoin,BTC,crypto,0.05,40000,65000
+Cash,CASH,cash,500,1,1
+```
+
+```bash
+# Each trading day: freeze today's snapshot (free), then run the adopted bundle once (paid)
+uv run harness-clone portfolio fetch --csv ~/portfolio.csv          # or omit --csv to use ETORO_API_KEY
+uv run harness-clone portfolio daily --max-usd 2                    # writes runs/portfolio/<date>/report.md and recommendations.json
+
+# Once a week, after the week's dailies: evolve the bundle (paid), then score matured calls (free)
+uv run harness-clone portfolio evolve --max-usd 5
+uv run harness-clone portfolio score --scoreboard ~/portfolio-scoreboard.json
+```
+
+All portfolio commands default to `--base-dir runs/portfolio` and today's date; pass `--date YYYY-MM-DD` to act on another day (for `evolve`, that day's ISO week). `daily` fetches the snapshot itself if `fetch` has not run yet. Pass `--scoreboard` to `fetch`/`daily` to feed matured outcomes from an earlier scoreboard into the new snapshot. Keep the scoreboard file outside `runs/portfolio`; `score` refuses to write it inside the run directory it reads. Run `evolve` once per week, at week end. Running it again in the same week after a new snapshot, or with a different `--max-usd`, is refused; pass a new `--run-dir` if you need to.
+
+**Troubleshooting**
+
+- `no baseline execution delivered`: the run reached Docker but the baseline failed. Read the execution records with `sqlite3 <run-dir>/run.sqlite "select id, value from records where kind='execution'"`; `worker-exit` with zero tokens means the gateway refused the request before any paid call.
+- `stream inputs changed` or `incompatible experiment configuration`: the task, sources, images, or `--max-usd` differ from what that run directory started with. Use a new `--run-dir`.
+- `live execution requires a key and nonzero spending cap`: export `FIREWORKS_API_KEY` and pass a nonzero `--max-usd`.
+- Images rebuilt mid-experiment: start a fresh `--run-dir`; resume rejects changed image IDs by design.
 
 ## Install and try the offline demo
 
@@ -90,7 +177,7 @@ Layout under `--base-dir` (all gitignored):
 
 **Privacy:** everything under `runs/` is gitignored. Snapshots contain your holdings, so keep `runs/portfolio` (and any CSV export or scoreboard) out of version control and treat snapshot directories as private financial data.
 
-**Status — read before trusting any output:** live portfolio runs are **unverified and deferred**. No paid `daily`/`evolve` run has been performed, and Task 1's complete live experiment run also remains unverified. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
+**Status — read before trusting any output:** live portfolio runs are **unverified**. The underlying live harness run is verified (21 October 2026), but no paid `daily`/`evolve` run has been performed yet. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
 
 **Operations after setup:** run `portfolio daily` each trading day and `portfolio evolve` + `portfolio score` weekly (scheduling via cron/launchd is your choice). Treat the first **4-week forward soak** (spec milestone 5) as an operational phase, not a code milestone: collect daily recommendations and matured scores for four weeks, review the scoreboard by hand, and only then let the reports inform any manual decision — made by you, outside this tool.
 
@@ -243,9 +330,9 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
 | Both refinement schedules | Controller count, ancestry, selection, and fallback tests |
 | Cross-task experience | Domain/ordinal namespace and two-task stream tests |
 | Resume | Interrupted probe replay and immutable publication tests |
-| Exact Fireworks model | Provider role-routing and usage tests; live preflight passed, full live run pending |
+| Exact Fireworks model | Provider role-routing and usage tests; live preflight and one complete live run passed |
 | Pi Durable | SQLite job identity/reopen tests and TypeScript build; container/live integration pending |
-| Credentials and budget | Gateway policy and transactional concurrent reservation tests; real isolation pending |
+| Credentials and budget | Gateway policy and transactional concurrent reservation tests; Docker isolation tests pass |
 | Evaluation separation | External output and evidence allowlist tests |
 
 The architecture/proposal and implementation plan are under `docs/`. Full benchmark replication, performance claims, distributed scheduling, adaptive early stopping, and controller self-modification are outside this MVP.
