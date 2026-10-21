@@ -8,6 +8,17 @@ The self-evolving portfolio agent is implemented on `main` and proven offline: e
 
 Still deferred/unverified, unchanged by Task 9: no paid calls were made, so live portfolio runs (`portfolio daily`/`evolve`) and Task 1's complete live experiment run remain unverified; the eToro live payload shape is fixture-based until confirmed with a real key; `uv.lock` still needs `uv lock && uv sync` outside the sandbox before live equity fetching (`yfinance` is declared and lazily imported). After live verification, operation is daily `portfolio daily`, weekly `portfolio evolve` + `portfolio score`, and the 4-week forward soak as an operational phase before reports inform any manual decision. The sections below predate the portfolio work and describe the earlier harness-clone handoff.
 
+## Task 1 verdict: live-pass (21 October 2026)
+
+Superseding the paragraph above for Task 1, the Docker gate, and `uv.lock`: one complete live experiment now runs end to end. With the user's approved `--max-usd 2` cap:
+
+- `HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q`: 3 passed (includes the portfolio in-container test).
+- `harness-clone doctor --live --max-usd 2`: `live-pass`, spent $0.0003.
+- First `run` (`runs/live-summary-20261021-191757`) reproduced the known blocker: `base1` failed `worker-exit` with zero tokens. Root cause: Deep Agents' Fireworks prompt-caching middleware sends `prompt_cache_key` on every request, which `InferenceGateway.prepare` rejected as an unsupported option (masked as a generic 400). `doctor` bypasses that middleware, which is why it passed. Fixed in `92bb7ad` (bounded string allowed; regression tests in `tests/test_sandbox.py`).
+- Re-run after an image rebuild (`runs/live-summary-20261021-192217`, `--mode parallel --k 1 --profile research --editor-policy text`): 4 executions (base1, inv1, dom1, agg1) all delivered `{"count": 3, "total": 10}`, 3 editing stages, `agg1` selected, no errors; spent $0.0836, nothing unknown. Offline `evaluate`: 1/1 passed.
+
+`uv.lock` was regenerated with yfinance in the final-review fix wave. Still unverified live: `portfolio daily`/`evolve`/`score`, the eToro payload shape, yfinance date/timezone behaviour, and `--editor-policy pi`. Python suite: 222 passed, 3 skipped.
+
 ## Start here
 
 **The implementation is in an isolated worktree, not the top-level checkout:**

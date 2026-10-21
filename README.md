@@ -175,7 +175,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv sync --frozen
    npm ci --prefix workers/pi
    uv run ruff check .
-   uv run pytest -q            # expect 191 passed, 3 skipped
+   uv run pytest -q            # expect 222 passed, 3 skipped
    npm test --prefix workers/pi
    npm run build --prefix workers/pi
    ```
@@ -221,7 +221,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv run harness-clone inspect --run-dir runs/live-summary   # includes recorded budget spend
    ```
 
-   Known issue: this currently fails at the baseline execution with a gateway rejection before budget reservation, while step 5 passes. Treat a successful `run` here as the live-verification milestone; it has not been reached yet.
+   Verified live on 21 October 2026 with the text editor: 4 delivered executions and a selected candidate for about $0.08. Expect `inspect` to show `"errors": []` and `"unknown": false`.
 
 7. **Score the result offline** (scores never feed back into refinement). For the summary task the expected artifact is the count and total of `examples/tasks/summary/source/values.json`:
 
