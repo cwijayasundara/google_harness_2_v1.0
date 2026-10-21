@@ -10,7 +10,7 @@ from typing import Literal
 from .contracts import Recommendation, Record, TaskResult
 from .storage import RunStore
 
-PriceFn = Callable[[str, date, date], tuple[float, float] | None]
+PriceFn = Callable[[str, str, date, date], tuple[float, float] | None]
 
 MIN_MATURED_ACTIVE = 20
 
@@ -49,8 +49,9 @@ def score_call(
     }
     if today < maturity_date:
         return ScoredCall(**base, status="pending")
-    ticker_prices = prices(rec.ticker, task_date, maturity_date)
-    bench_prices = prices(rec.benchmark, task_date, maturity_date)
+    ticker_prices = prices(rec.ticker, rec.asset_class, task_date, maturity_date)
+    benchmark_class = "crypto" if rec.benchmark.upper() in {"BTC", "ETH"} else "equity"
+    bench_prices = prices(rec.benchmark, benchmark_class, task_date, maturity_date)
     if (
         ticker_prices is None
         or bench_prices is None

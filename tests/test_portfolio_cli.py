@@ -141,3 +141,42 @@ def test_portfolio_score_writes_scoreboard_outside_run_dir(tmp_path, monkeypatch
     report = json.loads(capsys.readouterr().out)
     assert report["matured"] == 0
     assert seen["today"] == date(2026, 10, 21)
+
+
+def test_portfolio_score_prices_route_by_asset_class(tmp_path, monkeypatch, capsys):
+    import harness_clone.cli as cli
+
+    run_dir = tmp_path / "run"
+    out = tmp_path / "scoreboard.json"
+    closes_calls = []
+
+    class FakeProvider:
+        def closes(self, ticker, asset_class, end, days):
+            closes_calls.append((ticker, asset_class))
+            return [100.0, 110.0]
+
+    def fake_scoreboard(run_root, out_path, today, prices, volatilities):
+        # A screened crypto ticker must reach the provider as crypto.
+        assert prices("SOL", "crypto", date(2026, 10, 14), today) == (100.0, 110.0)
+        assert prices("AAPL", "equity", date(2026, 10, 14), today) == (100.0, 110.0)
+        return {"generated_at": today.isoformat(), "matured": 0, "pending": 0}
+
+    monkeypatch.setattr(cli, "portfolio_scoreboard", fake_scoreboard)
+    monkeypatch.setattr(cli, "live_price_provider", lambda: FakeProvider())
+    assert (
+        cli.main(
+            [
+                "portfolio",
+                "score",
+                "--run-dir",
+                str(run_dir),
+                "--scoreboard",
+                str(out),
+                "--date",
+                "2026-10-21",
+            ]
+        )
+        == 0
+    )
+    assert ("SOL", "crypto") in closes_calls
+    assert ("AAPL", "equity") in closes_calls

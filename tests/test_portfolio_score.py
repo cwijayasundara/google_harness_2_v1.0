@@ -22,7 +22,7 @@ def rec(**over):
     return Recommendation(**base)
 
 
-def fake_prices(ticker, start, end):
+def fake_prices(ticker, asset_class, start, end):
     table = {
         "AAPL": (100.0, 112.0),  # +12%
         "SPY": (100.0, 102.0),  # +2%
@@ -30,6 +30,30 @@ def fake_prices(ticker, start, end):
         "ETH": (100.0, 102.0),
     }
     return table.get(ticker)
+
+
+def test_crypto_ticker_routed_by_asset_class():
+    from harness_clone.portfolio_score import score_call
+
+    calls = []
+
+    def recording_prices(ticker, asset_class, start, end):
+        calls.append((ticker, asset_class))
+        if asset_class != "crypto":
+            return None
+        return {"SOL": (100.0, 120.0), "BTC": (100.0, 110.0)}.get(ticker)
+
+    s = score_call(
+        rec(ticker="SOL", asset_class="crypto", benchmark="BTC"),
+        date(2026, 10, 14),
+        date(2026, 10, 21),
+        recording_prices,
+        0.2,
+    )
+    assert s.status == "matured"
+    assert calls == [("SOL", "crypto"), ("BTC", "crypto")]
+    # +20% vs +10% BTC, minus 0.25 crypto cost.
+    assert s.excess_return_pct == pytest.approx(9.75)
 
 
 def test_unmatured_call_is_pending():

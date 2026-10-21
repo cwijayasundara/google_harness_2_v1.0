@@ -203,7 +203,9 @@ def _portfolio_score(args, run_dir: Path, day: date) -> dict:
 
     store = RunStore(run_dir)
     results = [_TaskResult.model_validate(r) for r in store.get("runtime", "results") or []]
+    benchmarks = {"SPY": "etf", "QQQ": "etf", "BTC": "crypto", "ETH": "crypto"}
     tickers: set[str] = set()
+    ticker_classes: dict[str, str] = {}
     for result in results:
         chosen = next(
             (
@@ -219,23 +221,27 @@ def _portfolio_score(args, run_dir: Path, day: date) -> dict:
             for rec in json.loads(chosen.artifacts.get("recommendations.json", "[]")):
                 tickers.add(str(rec["ticker"]))
                 tickers.add(str(rec["benchmark"]))
+                if rec.get("asset_class"):
+                    ticker_classes[str(rec["ticker"])] = str(rec["asset_class"])
+                ticker_classes.setdefault(
+                    str(rec["benchmark"]), benchmarks.get(str(rec["benchmark"]), "equity")
+                )
         except (ValueError, KeyError, TypeError):
             continue
-    benchmarks = {"SPY": "etf", "QQQ": "etf", "BTC": "crypto", "ETH": "crypto"}
     provider = live_price_provider()
     volatilities = {
         ticker: market_summary(
             ticker,
-            benchmarks.get(ticker, "equity"),
-            provider.closes(ticker, benchmarks.get(ticker, "equity"), day, 365),
+            ticker_classes.get(ticker, benchmarks.get(ticker, "equity")),
+            provider.closes(
+                ticker, ticker_classes.get(ticker, benchmarks.get(ticker, "equity")), day, 365
+            ),
         ).volatility_30d
         for ticker in sorted(tickers)
     }
 
-    def prices(ticker: str, start: date, end: date):
-        values = provider.closes(
-            ticker, benchmarks.get(ticker, "equity"), end, max((end - start).days + 1, 1)
-        )
+    def prices(ticker: str, asset_class: str, start: date, end: date):
+        values = provider.closes(ticker, asset_class, end, max((end - start).days + 1, 1))
         return (values[0], values[-1]) if values else None
 
     return portfolio_scoreboard(run_dir, out, day, prices, volatilities)
@@ -340,12 +346,7 @@ def main(argv=None):
         elif args.command == "demo":
             report = run_demo(args.run_dir, args.mode, args.k)
         elif args.command == "run":
-            if Decimal(args.max_usd) <= 0:
-                raise ValueError("live run requires an explicit nonzero spending cap via --max-usd")
-            if not os.environ.get("FIREWORKS_API_KEY"):
-                raise ValueError("FIREWORKS_API_KEY is not configured")
-            if not docker_available():
-                raise ValueError("Docker daemon unavailable; start Docker before live execution")
+            cap = _admit_live(args.max_usd)
             from .tasks import load_task
             from .experience import check_stream, run_stream
 
@@ -355,7 +356,7 @@ def main(argv=None):
                 k=args.k,
                 profile=args.profile,
                 editor_policy=args.editor_policy,
-                max_usd=Decimal(args.max_usd),
+                max_usd=cap,
                 image_id=resolve_image_id(defaults.image),
                 pi_image_id=resolve_image_id(PI_IMAGE),
             )
