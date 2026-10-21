@@ -153,16 +153,37 @@ def test_run_daily_rejects_invalid_recommendations(tmp_path, store, bad_executor
     assert store.get("execution", f"{task.id}/daily") is None
 
 
-def test_run_daily_rejects_report_without_bundle_digest(tmp_path, store):
+def test_run_daily_accepts_report_without_digest_the_agent_cannot_know(tmp_path, store):
+    # The worker never gives the agent its bundle digest, so provenance is
+    # stamped host-side rather than required inside the agent's report.
     from harness_clone.portfolio_ops import run_daily
 
     task = fake_task(tmp_path / "snapshots")
     executor = FakeExecutor(
         artifacts={"recommendations.json": valid_recs(), "report.md": "no provenance here"}
     )
-    with pytest.raises(ValueError, match="digest"):
-        run_daily(store, executor, task, "d" * 64)
-    assert store.get("execution", f"{task.id}/daily") is None
+    record = run_daily(store, executor, task, "d" * 64)
+    assert record.delivered is True
+
+
+def test_stamp_report_records_digest_fetch_time_and_age(tmp_path):
+    from datetime import datetime, timezone
+
+    from harness_clone.portfolio_ops import stamp_report, write_delivered_report
+
+    task = fake_task(tmp_path / "snapshots")
+    record = FakeExecutor(
+        artifacts={"recommendations.json": valid_recs(), "report.md": "# Body\n"}
+    ).execute(task, "d" * 64, f"{task.id}/daily")
+    now = datetime(2026, 10, 21, 10, 30, tzinfo=timezone.utc)
+    text = stamp_report(task, record, now)
+    assert "Bundle digest: " + "d" * 64 in text
+    assert "2026-10-21T08:00:00Z" in text and "2h 30m" in text
+    assert text.rstrip().endswith("# Body")
+    path = write_delivered_report(task, record, now)
+    assert path == tmp_path / "snapshots" / "2026-10-21" / "report.md"
+    assert path.read_text() == text
+    assert json.loads(path.with_name("recommendations.json").read_text())[0]["ticker"] == "AAPL"
 
 
 def test_run_daily_rejects_empty_report_and_undelivered(tmp_path, store):

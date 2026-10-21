@@ -21,6 +21,7 @@ from .portfolio_ops import (
     run_daily,
     run_evolution,
     write_adopted,
+    write_delivered_report,
 )
 from .portfolio_score import PRICE_LOOKBACK_DAYS, window_prices
 from .portfolio_score import scoreboard as portfolio_scoreboard
@@ -281,11 +282,13 @@ def run_portfolio(args) -> dict:
         executor, _factory = live_components(config, store)
         record = run_daily(store, executor, task, digest)
         _record_daily_result(store, task, record)
+        report_path = write_delivered_report(task, record, datetime.now(timezone.utc))
         return {
             "task": task.id,
             "execution": record.execution_id,
             "delivered": record.delivered,
             "bundle_digest": digest,
+            "report": str(report_path),
         }
     config = _pinned_config(cap, mode="sequential", k=1)
     tasks = _week_tasks(base_dir, day)

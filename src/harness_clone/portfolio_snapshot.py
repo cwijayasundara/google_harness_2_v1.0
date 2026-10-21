@@ -44,8 +44,8 @@ crypto calls)
 portfolio-level risk, then gives the per-call rationale for each \
 recommendation, includes the research-only notice (these are research \
 recommendations for the account holder's manual review; no orders are \
-placed), states the snapshot age based on the snapshot fetch timestamp, \
-and records the bundle digest that produced it as provenance.
+placed), and states the snapshot fetch timestamp. The host stamps the \
+bundle digest and snapshot age onto the delivered report as provenance.
 
 Base every call only on the snapshot evidence provided; do not invent \
 prices, holdings, or outcomes that are not in the source files.

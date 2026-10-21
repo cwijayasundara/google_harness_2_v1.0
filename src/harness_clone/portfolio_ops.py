@@ -7,7 +7,7 @@ candidate bundle.
 
 import json
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .contracts import ExecutionRecord, ExperimentConfig, PortfolioSnapshot, TaskSpec
@@ -88,7 +88,11 @@ def _snapshot_tickers(task: TaskSpec) -> dict[str, set[str]]:
 
 
 def _validate_artifacts(task: TaskSpec, record: ExecutionRecord) -> None:
-    """Schema-validate recommendations and check report provenance."""
+    """Schema-validate recommendations and require a non-empty report.
+
+    The agent is never told its bundle digest, so provenance is not
+    required inside ``report.md``; :func:`stamp_report` adds it host-side.
+    """
     text = record.artifacts.get("recommendations.json")
     if text is None:
         raise ValueError(f"execution {record.execution_id} produced no recommendations.json")
@@ -96,11 +100,62 @@ def _validate_artifacts(task: TaskSpec, record: ExecutionRecord) -> None:
     report = record.artifacts.get("report.md")
     if report is None or not report.strip():
         raise ValueError(f"execution {record.execution_id} produced no non-empty report.md")
-    digest = record.bundle_digest
-    if digest and digest not in report:
-        raise ValueError(
-            f"report.md for {record.execution_id} does not record bundle digest {digest}"
-        )
+
+
+def _snapshot_fetched_at(task: TaskSpec) -> str:
+    try:
+        data = json.loads((Path(task.source_root) / "portfolio.json").read_text())
+        return str(data["fetched_at"])
+    except (OSError, ValueError, KeyError) as exc:
+        raise ValueError(f"cannot read snapshot fetch time for {task.id}: {exc}") from exc
+
+
+def _age(fetched_at: str, now: datetime) -> str:
+    try:
+        fetched = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "unknown (unparseable fetch timestamp)"
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=timezone.utc)
+    minutes = int((now - fetched).total_seconds() // 60)
+    if minutes < 0:
+        return "unknown (fetch timestamp is in the future)"
+    days, rest = divmod(minutes, 24 * 60)
+    hours, mins = divmod(rest, 60)
+    return (f"{days}d " if days else "") + f"{hours}h {mins}m"
+
+
+def stamp_report(task: TaskSpec, record: ExecutionRecord, now: datetime) -> str:
+    """Prefix the agent's report with host-verified provenance (spec 5.2)."""
+    fetched_at = _snapshot_fetched_at(task)
+    header = "\n".join(
+        [
+            "<!-- provenance stamped by the host, not written by the agent -->",
+            f"Bundle digest: {record.bundle_digest}",
+            f"Execution: {record.execution_id}",
+            f"Snapshot fetched at: {fetched_at}",
+            f"Snapshot age at delivery: {_age(fetched_at, now)} "
+            f"(as of {now.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')})",
+            "Research only; not financial advice. No orders are placed.",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return header + record.artifacts["report.md"].lstrip()
+
+
+def write_delivered_report(task: TaskSpec, record: ExecutionRecord, now: datetime) -> Path:
+    """Write the stamped report and recommendations beside the dated snapshot.
+
+    Files land in ``<base>/<date>/`` (the parent of the frozen ``source/``),
+    so the snapshot evidence and stream signature are untouched.
+    """
+    dated_dir = Path(task.source_root).parent
+    report = dated_dir / "report.md"
+    report.write_text(stamp_report(task, record, now))
+    (dated_dir / "recommendations.json").write_text(record.artifacts["recommendations.json"])
+    return report
 
 
 def fetch_task(
