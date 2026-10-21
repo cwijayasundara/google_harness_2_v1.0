@@ -25,6 +25,25 @@ if [ "$BASE_DIR" = "runs/portfolio-demo" ] && [ ! -f "$BASE_DIR/.demo" ]; then
 fi
 mkdir -p "$BASE_DIR"
 
+PORT="${PORT:-8765}"
+
+# Stop whatever is already listening on the port (e.g. a previous backend), so we restart cleanly.
+PIDS="$(lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+if [ -n "$PIDS" ]; then
+  echo "Port $PORT is in use (pid $(echo $PIDS)); stopping it..."
+  kill $PIDS 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  PIDS="$(lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -n "$PIDS" ]; then
+    echo "Still running after 5s; force-killing..."
+    kill -9 $PIDS 2>/dev/null || true
+    sleep 0.5
+  fi
+fi
+
 [ -n "${FIREWORKS_API_KEY:-}" ] || echo "note: FIREWORKS_API_KEY is not set; paid runs will be disabled in the UI."
-echo "Cockpit API → http://127.0.0.1:${PORT:-8765}  (serving $BASE_DIR)"
-exec uv run python -m harness_clone.ui_server --base-dir "$BASE_DIR" --host 127.0.0.1 --port "${PORT:-8765}"
+echo "Cockpit API → http://127.0.0.1:${PORT}  (serving $BASE_DIR)"
+exec uv run python -m harness_clone.ui_server --base-dir "$BASE_DIR" --host 127.0.0.1 --port "$PORT"
