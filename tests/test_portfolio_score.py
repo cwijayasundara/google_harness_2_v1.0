@@ -160,6 +160,86 @@ def test_aggregates_at_20_matured_active(tmp_path):
     assert report["active_calls"] == 20
 
 
+def _write_result(run_root, task_id, *, delivered=True, artifacts=None, store_existing=None):
+    from harness_clone.contracts import ExecutionRecord, SelectionRecord, TaskResult
+    from harness_clone.storage import RunStore
+
+    run_root.mkdir(parents=True, exist_ok=True)
+    store = store_existing or RunStore(run_root)
+    ex = ExecutionRecord(
+        execution_id="e1",
+        task_id=task_id,
+        bundle_digest="a" * 64,
+        delivered=delivered,
+        artifacts=(
+            {"recommendations.json": json.dumps([_rec_dict()])} if artifacts is None else artifacts
+        ),
+    )
+    result = TaskResult(
+        task_id=task_id,
+        executions={"e1": ex},
+        selection=SelectionRecord(chosen_execution_id="e1"),
+    )
+    existing = store.get("runtime", "results") or []
+    store.put("runtime", "results", existing + [result.model_dump(mode="json")])
+    return store
+
+
+def test_scoreboard_counts_skipped_undeterminable_and_unparseable(tmp_path):
+    from harness_clone.portfolio_score import scoreboard
+
+    run_root = tmp_path / "run"
+    _write_run(run_root, [_rec_dict()])  # 1 matured call
+    from harness_clone.storage import RunStore
+
+    store = RunStore(run_root)
+    # Result whose task date cannot be determined.
+    _write_result(run_root, "portfolio-nodate", store_existing=store)
+    # Result whose recommendations artifact fails to parse.
+    _write_result(
+        run_root,
+        "portfolio-20261014",
+        artifacts={"recommendations.json": "{not json"},
+        store_existing=store,
+    )
+    report = scoreboard(
+        run_root, tmp_path / "sb.json", date(2026, 10, 21), fake_prices, {"AAPL": 0.2}
+    )
+    assert report["skipped"] == 2
+    assert report["matured"] == 1 and report["pending"] == 0 and report["unscored"] == 0
+    # Each fixture result carries one call, so coverage reconciles with 3 results.
+    assert report["matured"] + report["pending"] + report["unscored"] + report["skipped"] == 3
+
+
+def test_scoreboard_counts_skipped_undelivered_and_missing_artifact(tmp_path):
+    from harness_clone.portfolio_score import scoreboard
+
+    run_root = tmp_path / "run"
+    _write_run(run_root, [_rec_dict()])  # 1 matured call
+    from harness_clone.storage import RunStore
+
+    store = RunStore(run_root)
+    _write_result(run_root, "portfolio-20261014", delivered=False, store_existing=store)
+    _write_result(run_root, "portfolio-20261014", artifacts={}, store_existing=store)
+    report = scoreboard(
+        run_root, tmp_path / "sb.json", date(2026, 10, 21), fake_prices, {"AAPL": 0.2}
+    )
+    assert report["skipped"] == 2
+    assert report["matured"] == 1
+    assert report["matured"] + report["pending"] + report["unscored"] + report["skipped"] == 3
+
+
+def test_scoreboard_skipped_zero_when_nothing_skipped(tmp_path):
+    from harness_clone.portfolio_score import scoreboard
+
+    run_root = tmp_path / "run"
+    _write_run(run_root, [_rec_dict()])
+    report = scoreboard(
+        run_root, tmp_path / "sb.json", date(2026, 10, 21), fake_prices, {"AAPL": 0.2}
+    )
+    assert report["skipped"] == 0
+
+
 def test_split_windows():
     from harness_clone.portfolio_score import split_windows
 

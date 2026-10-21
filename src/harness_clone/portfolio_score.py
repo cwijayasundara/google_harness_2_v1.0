@@ -112,6 +112,7 @@ def scoreboard(
     }
 
     calls: list[ScoredCall] = []
+    skipped = 0
     for result in results:
         chosen = next(
             (
@@ -122,17 +123,21 @@ def scoreboard(
             None,
         )
         if chosen is None or not chosen.delivered:
+            skipped += 1
             continue
         artifact = chosen.artifacts.get("recommendations.json")
         if artifact is None:
+            skipped += 1
             continue
         task_date = _task_date(result.task_id, tasks_by_id)
         if task_date is None:
+            skipped += 1
             continue
         try:
             raw = json.loads(artifact)
             recs = [Recommendation.model_validate(item) for item in raw]
         except (ValueError, TypeError):
+            skipped += 1
             continue
         for rec in recs:
             calls.append(
@@ -159,6 +164,7 @@ def scoreboard(
         "matured": matured,
         "pending": pending,
         "unscored": unscored,
+        "skipped": skipped,
         "mean_excess_return_pct": mean_excess,
         "hit_rate": hit_rate,
         "mean_risk_adjusted": mean_risk,
