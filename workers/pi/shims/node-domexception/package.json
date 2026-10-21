@@ -1,0 +1,7 @@
+{
+  "name": "node-domexception",
+  "version": "1.0.0",
+  "description": "Local shim: re-export Node's native DOMException instead of the deprecated node-domexception package.",
+  "main": "index.js",
+  "license": "MIT"
+}
