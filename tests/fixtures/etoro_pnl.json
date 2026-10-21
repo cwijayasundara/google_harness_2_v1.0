@@ -1,0 +1,14 @@
+{
+  "currency": "USD",
+  "cash": 800.0,
+  "positions": [
+    {
+      "instrument": "Acme Corp",
+      "ticker": "ACME",
+      "asset_class": "equity",
+      "units": 10.0,
+      "open_rate": 100.0,
+      "current_price": 120.0
+    }
+  ]
+}

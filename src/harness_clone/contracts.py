@@ -161,3 +161,21 @@ class SubagentSpec(Record):
     name: str = Field(pattern=r"^[a-z0-9_-]+$")
     description: str = Field(min_length=1)
     system_prompt: str = Field(min_length=1)
+
+
+class PortfolioPosition(Record):
+    instrument: str
+    ticker: str
+    asset_class: Literal["equity", "crypto", "etf", "cash"]
+    units: float
+    open_rate: float
+    current_price: float
+    unrealized_pnl_pct: float
+    portfolio_weight: float
+
+
+class PortfolioSnapshot(Record):
+    fetched_at: str
+    currency: str
+    cash_weight: float
+    positions: list[PortfolioPosition]
