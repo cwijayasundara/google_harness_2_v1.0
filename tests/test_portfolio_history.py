@@ -188,6 +188,8 @@ def test_history_drops_and_reports_holdings_without_a_price_that_day(tmp_path):
         tmp_path, [date(2026, 9, 1)], [], PartialProvider(), two_holding_proxy()
     )
     portfolio = json.loads((tasks[0].source_root / "portfolio.json").read_text())
+    candidates = json.loads((tasks[0].source_root / "candidates.json").read_text())
+    assert candidates["universe_missing"]["sample"] == ["BTC"]
     assert [p["ticker"] for p in portfolio["positions"]] == ["AAPL"]
     assert portfolio["missing_positions"] == ["BTC"]
     assert portfolio["positions"][0]["portfolio_weight"] == pytest.approx(0.8)

@@ -223,3 +223,29 @@ def test_portfolio_score_prices_span_task_date_to_maturity_across_weekend(
     assert cli.main([*args, "--date", "2026-10-28"]) == 0
     # Friday 10-16 close (on/before the Sunday call) to Friday 10-23 close.
     assert seen["window"] == (price_on(date(2026, 10, 16)), price_on(date(2026, 10, 23)))
+
+
+def test_portfolio_fetch_warns_on_partial_universe(tmp_path, monkeypatch, capsys):
+    import harness_clone.cli as cli
+    from harness_clone.portfolio_snapshot import build_snapshot_task
+
+    csv_path = tmp_path / "portfolio.csv"
+    csv_path.write_text(
+        "instrument,ticker,asset_class,units,open_rate,current_price\n"
+        "Apple Inc,AAPL,equity,10,100,120\n"
+    )
+
+    def fake_fetch_task(base, day, portfolio, provider, **kwargs):
+        missing = {"count": 2, "sample": ["MSFT", "USDT"], "sources_unavailable": []}
+        return build_snapshot_task(
+            base, day, portfolio, {}, [], 6, [], universe_missing=missing
+        )
+
+    monkeypatch.setattr(cli, "fetch_task", fake_fetch_task)
+    argv = ["portfolio", "fetch", "--base-dir", str(tmp_path / "p"), "--date", "2026-10-21"]
+    assert cli.main([*argv, "--csv", str(csv_path)]) == 0
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["universe_missing"]["count"] == 2
+    assert any("2 of 6" in w for w in report["warnings"])
+    assert "2 of 6" in captured.err

@@ -16,7 +16,8 @@ You are analysing a frozen daily portfolio snapshot dated {day} \
 directory before making any call: `portfolio.json` (holdings, cash \
 weight, currency), `market.json` (per-ticker market summaries), \
 `candidates.json` (screened candidates, with `universe_considered` and \
-`universe_returned` coverage counts), and `prior_outcomes.json` \
+`universe_returned` coverage counts and `universe_missing` — tickers with \
+no market data, which the report must mention), and `prior_outcomes.json` \
 (matured outcomes of past recommendations; empty when there are none).
 
 Produce exactly two outputs:
@@ -62,6 +63,7 @@ def build_snapshot_task(
     *,
     proxy: bool = False,
     portfolio_extra: dict | None = None,
+    universe_missing: dict | None = None,
 ) -> TaskSpec:
     dated_dir = Path(base) / day.isoformat()
     if dated_dir.exists() or dated_dir.is_symlink():
@@ -96,6 +98,7 @@ def build_snapshot_task(
             {
                 "universe_considered": universe_considered,
                 "universe_returned": len(candidates),
+                **({"universe_missing": universe_missing} if universe_missing is not None else {}),
                 "candidates": [c.model_dump(mode="json") for c in candidates],
             },
             indent=2,

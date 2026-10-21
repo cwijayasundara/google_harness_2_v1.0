@@ -248,9 +248,19 @@ def test_top_crypto_symbols_from_list_response():
 
     def fake_get(url, params):
         calls.append((url, params))
-        return [{"symbol": "btc"}, {"symbol": "eth"}, {"symbol": "sol"}]
+        return [
+            {"id": "bitcoin", "symbol": "btc"},
+            {"id": "tether", "symbol": "usdt"},
+            {"id": "staked-ether", "symbol": "steth"},
+            {"id": "usdt-clone", "symbol": "usdt"},  # lower-cap duplicate symbol
+        ]
 
-    assert top_crypto_symbols(fake_get) == ["BTC", "ETH", "SOL"]
+    # CoinGecko ids are kept: USDT is ``tether``, not a guessed ``usdt``.
+    assert top_crypto_symbols(fake_get) == [
+        ("BTC", "bitcoin"),
+        ("USDT", "tether"),
+        ("STETH", "staked-ether"),
+    ]
     assert "coins/markets" in calls[0][0]
     assert calls[0][1]["vs_currency"] == "usd"
     assert calls[0][1]["per_page"] == 100
@@ -258,7 +268,23 @@ def test_top_crypto_symbols_from_list_response():
 
 def test_top_crypto_symbols_from_dict_response():
     def fake_get(url, params):
-        return {"coins": [{"symbol": "btc"}]}
+        return {"coins": [{"id": "bitcoin", "symbol": "btc"}, {"symbol": "noid"}]}
 
-    # dict-shaped fakes are tolerated even though the live API returns a list
-    assert top_crypto_symbols(fake_get) == ["BTC"]
+    # dict-shaped fakes are tolerated even though the live API returns a list;
+    # an entry without an id cannot be priced and is skipped.
+    assert top_crypto_symbols(fake_get) == [("BTC", "bitcoin")]
+
+
+def test_coingecko_provider_uses_registered_coin_ids():
+    urls = []
+
+    def fake_get(url, params):
+        urls.append(url)
+        return {"prices": []}
+
+    provider = CoinGeckoProvider(get=fake_get)
+    provider.add_coin_ids({"USDT": "tether", "BTC": "not-bitcoin"})
+    provider.closes("USDT", "crypto", END, days=7)
+    provider.closes("BTC", "crypto", END, days=7)
+    assert "/coins/tether/" in urls[0]
+    assert "/coins/bitcoin/" in urls[1]  # curated ids are not overridden

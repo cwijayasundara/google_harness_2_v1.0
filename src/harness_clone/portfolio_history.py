@@ -109,6 +109,7 @@ def build_history(
             summaries[ticker] = market_summary(ticker, asset_class, closes)
         candidates = screen_candidates(list(summaries.values()))
         portfolio, missing = _reprice(proxy_portfolio, summaries, day)
+        no_data = sorted(t for t, summary in summaries.items() if summary.missing)
         tasks.append(
             build_snapshot_task(
                 base,
@@ -120,6 +121,11 @@ def build_history(
                 [],
                 proxy=True,
                 portfolio_extra={"missing_positions": missing},
+                universe_missing={
+                    "count": len(no_data),
+                    "sample": no_data[:10],
+                    "sources_unavailable": [],
+                },
             )
         )
     return tasks

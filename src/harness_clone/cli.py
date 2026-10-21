@@ -13,6 +13,7 @@ from .contracts import PI_IMAGE, ExperimentConfig, SelectionRecord, TaskResult, 
 from .demo import default_bundle, run_demo, summarize
 from .portfolio_etoro import EtoroClient, load_portfolio_csv
 from .portfolio_ops import (
+    coverage_warnings,
     ensure_adopted,
     evolved_digest,
     fetch_task,
@@ -259,7 +260,15 @@ def run_portfolio(args) -> dict:
             live_price_provider(),
             scoreboard_path=args.scoreboard,
         )
-        return {"task": task.id, "date": day.isoformat(), "source_root": str(task.source_root)}
+        report = {"task": task.id, "date": day.isoformat(), "source_root": str(task.source_root)}
+        universe_missing, warnings = coverage_warnings(task)
+        if universe_missing is not None:
+            report["universe_missing"] = universe_missing
+        if warnings:
+            report["warnings"] = warnings
+            for warning in warnings:
+                print(f"harness-clone: warning: {warning}", file=sys.stderr)
+        return report
     run_dir: Path = args.run_dir or (base_dir / "run")
     if args.portfolio_command == "score":
         return _portfolio_score(args, run_dir, day)

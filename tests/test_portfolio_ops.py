@@ -219,7 +219,11 @@ def _fake_sp500_fetch(url):
 
 
 def _fake_crypto_get(url, params):
-    return [{"symbol": "btc"}, {"symbol": "eth"}, {"symbol": "sol"}]
+    return [
+        {"id": "bitcoin", "symbol": "btc"},
+        {"id": "ethereum", "symbol": "eth"},
+        {"id": "solana", "symbol": "sol"},
+    ]
 
 
 def test_fetch_task_builds_snapshot_with_candidates_and_outcomes(tmp_path):
@@ -364,3 +368,78 @@ def test_run_daily_rejects_asset_class_not_matching_snapshot(tmp_path, store):
     )
     with pytest.raises(ValueError, match="asset_class"):
         run_daily(store, executor, task, "d" * 64)
+
+
+class FlakyProvider(FakeProvider):
+    """Universe tickers in ``fail`` raise like a 404/429; ``empty`` return nothing."""
+
+    def __init__(self, fail=(), empty=()):
+        super().__init__()
+        self.fail, self.empty, self.coin_ids = set(fail), set(empty), {}
+
+    def add_coin_ids(self, coin_ids):
+        self.coin_ids.update(coin_ids)
+
+    def closes(self, ticker, asset_class, end, days):
+        if ticker in self.fail:
+            raise RuntimeError(f"HTTP 429 for {ticker}")
+        if ticker in self.empty:
+            return []
+        return super().closes(ticker, asset_class, end, days)
+
+
+def test_fetch_task_reports_partial_universe_coverage(tmp_path):
+    from harness_clone.portfolio_ops import fetch_task
+
+    provider = FlakyProvider(fail={"MSFT", "SOL"}, empty={"NVDA"})
+    task = fetch_task(
+        tmp_path / "snapshots",
+        DAY,
+        fake_portfolio(),
+        provider,
+        sp500_fetch=_fake_sp500_fetch,
+        crypto_get=_fake_crypto_get,
+    )
+    # CoinGecko ids from /coins/markets reach the crypto provider.
+    assert provider.coin_ids == {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"}
+    cand = json.loads((task.source_root / "candidates.json").read_text())
+    assert cand["universe_considered"] == 6
+    missing = cand["universe_missing"]
+    assert missing["count"] == 3
+    assert missing["sample"] == ["MSFT", "NVDA", "SOL"]
+    assert missing["sources_unavailable"] == []
+    assert {c["ticker"] for c in cand["candidates"]} == {"AAPL", "BTC", "ETH"}
+
+
+def test_fetch_task_tolerates_unavailable_sp500_list_but_reports_it(tmp_path):
+    from harness_clone.portfolio_ops import fetch_task
+
+    def broken_sp500(url):
+        raise RuntimeError("wikipedia unavailable")
+
+    task = fetch_task(
+        tmp_path / "snapshots",
+        DAY,
+        fake_portfolio(),
+        FakeProvider(),
+        sp500_fetch=broken_sp500,
+        crypto_get=_fake_crypto_get,
+    )
+    cand = json.loads((task.source_root / "candidates.json").read_text())
+    assert cand["universe_missing"]["sources_unavailable"] == ["sp500"]
+    assert cand["universe_considered"] == 3
+
+
+def test_fetch_task_holding_fetch_failure_still_aborts(tmp_path):
+    from harness_clone.portfolio_ops import fetch_task
+
+    with pytest.raises(RuntimeError, match="AAPL"):
+        fetch_task(
+            tmp_path / "snapshots",
+            DAY,
+            fake_portfolio(),
+            FlakyProvider(fail={"AAPL"}),
+            sp500_fetch=_fake_sp500_fetch,
+            crypto_get=_fake_crypto_get,
+        )
+    assert not (tmp_path / "snapshots" / DAY.isoformat()).exists()

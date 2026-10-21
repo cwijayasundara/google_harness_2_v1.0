@@ -320,15 +320,21 @@ def sp500_tickers(fetch: Callable[[str], str]) -> list[str]:
     return tickers
 
 
-def top_crypto_symbols(get: Callable[[str, dict], dict]) -> list[str]:
-    """Top crypto symbols (uppercased) from CoinGecko ``/coins/markets``."""
+def top_crypto_symbols(get: Callable[[str, dict], list | dict]) -> list[tuple[str, str]]:
+    """Top crypto ``(SYMBOL, coingecko_id)`` pairs from CoinGecko ``/coins/markets``.
+
+    The live endpoint returns a list ordered by market cap. The id is kept
+    because symbols do not map to ids (USDT is ``tether``); entries without
+    an id are skipped and a repeated symbol keeps its highest-cap coin.
+    """
     payload = get(COINGECKO_MARKETS_URL, {"vs_currency": "usd", "per_page": 100})
     if isinstance(payload, dict):
         items = payload.get("coins") or payload.get("markets") or payload.get("data") or []
     else:
         items = payload or []
-    return [
-        str(item["symbol"]).upper()
-        for item in items
-        if isinstance(item, dict) and item.get("symbol")
-    ]
+    pairs: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict) or not item.get("symbol") or not item.get("id"):
+            continue
+        pairs.setdefault(str(item["symbol"]).upper(), str(item["id"]))
+    return list(pairs.items())

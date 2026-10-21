@@ -26,6 +26,7 @@ from .storage import RunStore
 
 BENCHMARKS: dict[str, str] = {"SPY": "etf", "QQQ": "etf", "BTC": "crypto", "ETH": "crypto"}
 HISTORY_DAYS = 365
+MISSING_SAMPLE = 10
 ADOPTED_FILE = "adopted.json"
 
 
@@ -60,6 +61,10 @@ class RoutedPriceProvider:
 
     def dated_closes(self, ticker: str, asset_class: str, end: date, days: int):
         return self._route(asset_class).dated_closes(ticker, asset_class, end, days)
+
+    def add_coin_ids(self, coin_ids: dict[str, str]) -> None:
+        if hasattr(self._crypto, "add_coin_ids"):
+            self._crypto.add_coin_ids(coin_ids)
 
 
 def live_price_provider() -> RoutedPriceProvider:
@@ -127,21 +132,73 @@ def fetch_task(
         for ticker, asset_class in wanted.items()
     }
 
-    equity_tickers = sp500_tickers(sp500_fetch or _default_sp500_fetch)
-    crypto_tickers = top_crypto_symbols(crypto_get or _default_crypto_get)[:100]
+    sources_unavailable: list[str] = []
+    try:
+        equity_tickers = sp500_tickers(sp500_fetch or _default_sp500_fetch)
+    except Exception:  # noqa: BLE001 - a missing list is reported, never fatal
+        equity_tickers, sources_unavailable = [], [*sources_unavailable, "sp500"]
+    try:
+        crypto_pairs = top_crypto_symbols(crypto_get or _default_crypto_get)[:100]
+    except Exception:  # noqa: BLE001 - a missing list is reported, never fatal
+        crypto_pairs, sources_unavailable = [], [*sources_unavailable, "crypto_top100"]
+    if crypto_pairs and hasattr(provider, "add_coin_ids"):
+        provider.add_coin_ids(dict(crypto_pairs))
     universe: list[tuple[str, str]] = [(t, "equity") for t in equity_tickers]
-    universe += [(t, "crypto") for t in crypto_tickers]
-    universe_summaries = [
-        market_summary(ticker, asset_class, provider.closes(ticker, asset_class, day, HISTORY_DAYS))
-        for ticker, asset_class in universe
-    ]
+    universe += [(symbol, "crypto") for symbol, _ in crypto_pairs]
+    universe_summaries = []
+    missing: list[str] = []
+    for ticker, asset_class in universe:
+        # Holdings and benchmarks above fail loudly; one universe ticker
+        # failing (404, 429, empty series) is recorded as missing instead.
+        try:
+            closes = provider.closes(ticker, asset_class, day, HISTORY_DAYS)
+        except Exception:  # noqa: BLE001
+            closes = []
+        summary = market_summary(ticker, asset_class, closes)
+        if summary.missing:
+            missing.append(ticker)
+        universe_summaries.append(summary)
     candidates = screen_candidates(universe_summaries, limit=30)
+    universe_missing = {
+        "count": len(missing),
+        "sample": sorted(missing)[:MISSING_SAMPLE],
+        "sources_unavailable": sources_unavailable,
+    }
 
     scoreboard = Path(scoreboard_path) if scoreboard_path is not None else base / "scoreboard.json"
     prior_outcomes = outcomes_for(scoreboard, day) if scoreboard.is_file() else []
     return build_snapshot_task(
-        base, day, portfolio_source, summaries, candidates, len(universe), prior_outcomes
+        base,
+        day,
+        portfolio_source,
+        summaries,
+        candidates,
+        len(universe),
+        prior_outcomes,
+        universe_missing=universe_missing,
     )
+
+
+def coverage_warnings(task: TaskSpec) -> tuple[dict | None, list[str]]:
+    """Read a snapshot's universe coverage and describe any gap as warnings."""
+    path = Path(task.source_root) / "candidates.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None, [f"cannot read universe coverage from {path}"]
+    missing = data.get("universe_missing")
+    if not isinstance(missing, dict):
+        return None, []
+    warnings = []
+    if missing.get("count"):
+        warnings.append(
+            f"universe coverage partial: {missing['count']} of "
+            f"{data.get('universe_considered')} tickers had no data "
+            f"(e.g. {', '.join(missing.get('sample', []))})"
+        )
+    for source in missing.get("sources_unavailable", []):
+        warnings.append(f"universe source unavailable: {source}")
+    return missing, warnings
 
 
 def run_daily(store: RunStore, executor, task: TaskSpec, bundle_digest: str) -> ExecutionRecord:
