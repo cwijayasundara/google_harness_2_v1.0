@@ -1,0 +1,13 @@
+services:
+  executor:
+    image: harness-clone-executor:0.1
+    build:
+      context: ..
+      dockerfile: containers/executor.Dockerfile
+    profiles: [build]
+  pi:
+    image: harness-clone-pi:0.1
+    build:
+      context: ..
+      dockerfile: containers/pi.Dockerfile
+    profiles: [build]
