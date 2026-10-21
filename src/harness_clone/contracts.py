@@ -179,3 +179,21 @@ class PortfolioSnapshot(Record):
     currency: str
     cash_weight: float
     positions: list[PortfolioPosition]
+
+
+class MarketSummary(Record):
+    ticker: str
+    asset_class: str
+    last_price: float
+    return_7d_pct: float
+    return_30d_pct: float
+    volatility_30d: float
+    high_52w_distance_pct: float
+    missing: bool = False
+
+
+class Candidate(Record):
+    ticker: str
+    asset_class: str
+    score: float
+    metrics: dict[str, float]
