@@ -19,6 +19,20 @@ def test_explicit_model_routing(role, monkeypatch):
     assert model.max_retries == 0
 
 
+def test_sdk_base_url_has_no_doubled_v1(monkeypatch):
+    # The Fireworks SDK appends /v1/chat/completions itself; passing a base
+    # that already ends in /v1 produces /v1/v1/chat/completions (live 404).
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-not-a-key")
+    from harness_clone.providers import make_model
+
+    direct = make_model(ExperimentConfig(), "executor")
+    assert str(direct._sdk_client.base_url).rstrip("/") == "https://api.fireworks.ai/inference"
+    via_gateway = make_model(
+        ExperimentConfig(), "executor", gateway_url="http://gw:8080/v1", gateway_token="t"
+    )
+    assert str(via_gateway._sdk_client.base_url).rstrip("/") == "http://gw:8080"
+
+
 def test_unknown_profile_and_role_rejected(monkeypatch):
     monkeypatch.setenv("FIREWORKS_API_KEY", "test-not-a-key")
     from harness_clone.providers import make_model

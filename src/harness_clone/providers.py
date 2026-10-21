@@ -29,10 +29,13 @@ def make_model(
     )
     if not key:
         raise ValueError("configure FIREWORKS_API_KEY or the harness inference gateway")
+    # The Fireworks SDK appends /v1/chat/completions to the base URL itself,
+    # so the base must not already end in /v1 (that yields /v1/v1/... 404s).
+    base_url = gateway.removesuffix("/v1") if gateway else "https://api.fireworks.ai/inference"
     return ChatFireworks(
         model=config.model,
         api_key=key,
-        base_url=gateway or "https://api.fireworks.ai/inference/v1",
+        base_url=base_url,
         temperature=0,
         max_tokens=config.max_output_tokens,
         timeout=config.timeout_seconds,
