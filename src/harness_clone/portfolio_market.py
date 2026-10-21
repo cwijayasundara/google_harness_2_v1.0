@@ -7,7 +7,7 @@ injected fakes) works without that package installed.
 
 import statistics
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Protocol, runtime_checkable
 
@@ -198,12 +198,16 @@ class CoinGeckoProvider:
 
     def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
         coin_id = self._coin_ids.get(ticker.upper(), ticker.lower())
+        to_ts = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp())
+        start = end - timedelta(days=days)
+        from_ts = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
         payload = self._get(
-            f"{COINGECKO_BASE_URL}/coins/{coin_id}/market_chart",
-            {"vs_currency": "usd", "days": days, "interval": "daily"},
+            f"{COINGECKO_BASE_URL}/coins/{coin_id}/market_chart/range",
+            {"vs_currency": "usd", "from": from_ts, "to": to_ts, "interval": "daily"},
         )
         prices = payload.get("prices", []) if isinstance(payload, dict) else []
-        result = [float(point[1]) for point in prices if len(point) >= 2]
+        cutoff_ms = to_ts * 1000
+        result = [float(point[1]) for point in prices if len(point) >= 2 and point[0] <= cutoff_ms]
         return result[-days:] if days > 0 else result
 
 

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -142,6 +142,33 @@ def test_coingecko_provider_uses_injected_get():
     assert "bitcoin" in calls[0][0]
     assert "market_chart" in calls[0][0]
     assert calls[0][1]["vs_currency"] == "usd"
+
+
+def test_coingecko_provider_bounds_closes_by_end():
+    calls = []
+
+    def ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def fake_get(url, params):
+        calls.append((url, params))
+        return {
+            "prices": [
+                [ms(END - timedelta(days=1)), 100.0],
+                [ms(END), 101.0],
+                [ms(END + timedelta(days=1)), 102.0],
+            ]
+        }
+
+    provider = CoinGeckoProvider(get=fake_get)
+    # No returned close is from after END, and the request itself is bounded.
+    assert provider.closes("BTC", "crypto", END, days=30) == [100.0, 101.0]
+    url, params = calls[0]
+    assert "market_chart/range" in url
+    expected_to = int(datetime(END.year, END.month, END.day, tzinfo=timezone.utc).timestamp())
+    expected_from = int(datetime(2026, 9, 21, tzinfo=timezone.utc).timestamp())  # END - 30 days
+    assert params["to"] == expected_to
+    assert params["from"] == expected_from
 
 
 def test_coingecko_provider_unknown_symbol_lowercases_and_empty():
