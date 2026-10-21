@@ -63,15 +63,17 @@ def live_price_provider() -> RoutedPriceProvider:
     return RoutedPriceProvider(YFinanceProvider(), CoinGeckoProvider())
 
 
-def _snapshot_tickers(task: TaskSpec) -> set[str]:
+def _snapshot_tickers(task: TaskSpec) -> dict[str, set[str]]:
+    """Ticker -> snapshot asset classes over holdings and candidates."""
     source = Path(task.source_root)
     try:
         portfolio = json.loads((source / "portfolio.json").read_text())
         candidates = json.loads((source / "candidates.json").read_text())
     except (OSError, ValueError) as exc:
         raise ValueError(f"cannot read snapshot tickers for {task.id}: {exc}") from exc
-    tickers = {str(p["ticker"]) for p in portfolio.get("positions", [])}
-    tickers |= {str(c["ticker"]) for c in candidates.get("candidates", [])}
+    tickers: dict[str, set[str]] = {}
+    for entry in [*portfolio.get("positions", []), *candidates.get("candidates", [])]:
+        tickers.setdefault(str(entry["ticker"]), set()).add(str(entry["asset_class"]).lower())
     return tickers
 
 

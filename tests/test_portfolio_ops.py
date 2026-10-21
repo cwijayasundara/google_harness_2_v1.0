@@ -351,3 +351,16 @@ def test_evolved_digest_keeps_previous_on_keep_base_invalid_or_undelivered(tmp_p
     )
     assert evolved_digest([undelivered], [task], previous) == previous
     assert evolved_digest([], [task], previous) == previous
+
+
+def test_run_daily_rejects_asset_class_not_matching_snapshot(tmp_path, store):
+    from harness_clone.portfolio_ops import run_daily
+
+    task = fake_task(tmp_path / "snapshots")
+    recs = json.loads(valid_recs())
+    recs[0].update(asset_class="crypto", benchmark="BTC")
+    executor = FakeExecutor(
+        artifacts={"recommendations.json": json.dumps(recs), "report.md": "d" * 64}
+    )
+    with pytest.raises(ValueError, match="asset_class"):
+        run_daily(store, executor, task, "d" * 64)

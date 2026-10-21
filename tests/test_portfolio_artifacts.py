@@ -25,7 +25,7 @@ def rec(**over):
         "asset_class": "equity",
         "action": "add",
         "target_weight_pct": 10.0,
-        "horizon_days": 30,
+        "horizon_days": 7,
         "thesis": "growth",
         "invalidation": "falls below X",
         "benchmark": "SPY",
@@ -49,8 +49,14 @@ def test_validator_accepts_valid_and_benchmark_tickers():
 
     out = validate_recommendations(rec_json(), {"AAPL"})
     assert out[0].ticker == "AAPL" and out[0].action == "add"
-    for t in ("SPY", "QQQ", "BTC", "ETH"):
-        assert validate_recommendations(rec_json(ticker=t), {"AAPL"})[0].ticker == t
+    for t, cls, bench in (
+        ("SPY", "etf", "SPY"),
+        ("QQQ", "etf", "SPY"),
+        ("BTC", "crypto", "ETH"),
+        ("ETH", "crypto", "BTC"),
+    ):
+        out = validate_recommendations(rec_json(ticker=t, asset_class=cls, benchmark=bench), {"AAPL"})
+        assert out[0].ticker == t
 
 
 def test_validator_rejects_unknown_ticker():
@@ -91,6 +97,53 @@ def test_validator_rejects_malformed():
         validate_recommendations('{"ticker":"AAPL"}', {"AAPL"})
     with pytest.raises(ValueError):
         validate_recommendations(rec_json(action="buy"), {"AAPL"})
+
+
+def test_validator_rejects_non_seven_day_horizon():
+    from harness_clone.portfolio_artifacts import validate_recommendations
+
+    with pytest.raises(ValueError, match="horizon_days"):
+        validate_recommendations(rec_json(horizon_days=30), {"AAPL"})
+    with pytest.raises(ValueError, match="horizon_days"):
+        validate_recommendations(rec_json(horizon_days=1, action="hold"), {"AAPL"})
+
+
+def test_validator_rejects_unknown_or_mismatched_benchmark():
+    from harness_clone.portfolio_artifacts import validate_recommendations
+
+    with pytest.raises(ValueError, match="benchmark"):
+        validate_recommendations(rec_json(benchmark="XLU"), {"AAPL"})
+    # Equity calls are benchmarked against SPY/QQQ, never a crypto benchmark.
+    with pytest.raises(ValueError, match="benchmark"):
+        validate_recommendations(rec_json(benchmark="BTC"), {"AAPL"})
+    assert validate_recommendations(rec_json(benchmark="QQQ"), {"AAPL"})[0].benchmark == "QQQ"
+    # Crypto calls use BTC/ETH.
+    snapshot = {"AAPL": "equity", "SOL": "crypto"}
+    with pytest.raises(ValueError, match="benchmark"):
+        validate_recommendations(
+            rec_json(ticker="SOL", asset_class="crypto", benchmark="SPY"), snapshot
+        )
+    out = validate_recommendations(
+        rec_json(ticker="SOL", asset_class="crypto", benchmark="ETH"), snapshot
+    )
+    assert out[0].benchmark == "ETH"
+
+
+def test_validator_rejects_asset_class_differing_from_snapshot():
+    from harness_clone.portfolio_artifacts import validate_recommendations
+
+    snapshot = {"AAPL": "equity", "SOL": "crypto"}
+    # Relabelling a crypto call as equity would cut costs and reroute prices.
+    with pytest.raises(ValueError, match="asset_class"):
+        validate_recommendations(
+            rec_json(ticker="SOL", asset_class="equity", benchmark="SPY"), snapshot
+        )
+    with pytest.raises(ValueError, match="asset_class"):
+        validate_recommendations(rec_json(ticker="BTC", asset_class="equity"), snapshot)
+    assert validate_recommendations(
+        rec_json(ticker="BTC", asset_class="crypto", benchmark="BTC"), snapshot
+    )
+    assert validate_recommendations(rec_json(ticker="SPY", asset_class="etf"), snapshot)
 
 
 def test_recommendation_contract_shape():

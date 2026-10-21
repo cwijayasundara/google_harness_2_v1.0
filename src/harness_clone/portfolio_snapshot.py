@@ -24,13 +24,14 @@ Produce exactly two outputs:
 1. `recommendations.json` — a JSON list of records, one per call, each \
 with exactly these fields:
    - `ticker` (string)
-   - `asset_class` (string)
+   - `asset_class` (string; must equal the ticker's `asset_class` in the snapshot)
    - `action`: one of `hold|trim|add|new_idea|exit`
    - `target_weight_pct` (number, percent of portfolio)
-   - `horizon_days` (integer)
+   - `horizon_days` (integer; must be 7)
    - `thesis` (string)
    - `invalidation` (string)
-   - `benchmark` (string, e.g. `SPY`)
+   - `benchmark` (string: `SPY` or `QQQ` for equity/etf calls, `BTC` or `ETH` for \
+crypto calls)
    - `evidence_refs` (list of strings citing source evidence, e.g. \
 `market.json:AAPL.30d_return`)
    Example record: {{"ticker": "AAPL", "asset_class": "equity", \
