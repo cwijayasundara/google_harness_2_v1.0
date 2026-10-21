@@ -102,6 +102,47 @@ def test_gateway_rejects_unmetered_generation_overrides(tmp_path):
         )
 
 
+@pytest.mark.docker
+def test_portfolio_math_executes_in_container():
+    import os
+
+    if os.environ.get("HARNESS_TEST_DOCKER") != "1":
+        pytest.skip("set HARNESS_TEST_DOCKER=1 after building the executor image")
+    scripts = Path(__file__).resolve().parents[1] / "examples/portfolio-harness/scripts"
+    code = (
+        "import sys; sys.path.insert(0, '/portfolio-scripts')\n"
+        "import portfolio_math\n"
+        "w = portfolio_math.weights([{'ticker': 'AAPL', 'units': 2, 'current_price': 50.0},"
+        " {'ticker': 'MSFT', 'units': 1, 'current_price': 100.0}])\n"
+        "assert w == {'AAPL': 0.5, 'MSFT': 0.5}, w\n"
+        "assert abs(portfolio_math.drift({'AAPL': 0.6}, {'AAPL': 0.5})['AAPL'] - 0.1) < 1e-12\n"
+        "assert portfolio_math.volatility([100.0, 101.0, 102.0]) > 0\n"
+    )
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            "--read-only",
+            "--user=65532:65532",
+            "--cap-drop=ALL",
+            "--tmpfs",
+            "/tmp:rw,mode=1777",
+            "--mount",
+            f"type=bind,src={scripts},dst=/portfolio-scripts,readonly",
+            "harness-clone-executor:0.1",
+            "python",
+            "-c",
+            code,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_artifact_collection_allows_host_ancestor_alias_but_no_candidate_symlink(tmp_path):
     from harness_clone.sandbox import collect_artifacts
 

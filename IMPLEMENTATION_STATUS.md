@@ -2,6 +2,12 @@
 
 Updated: 21 October 2026. Implementation stopped at the user's request to continue from Muse.
 
+## Portfolio agent update (Tasks 2–9, 21 October 2026)
+
+The self-evolving portfolio agent is implemented on `main` and proven offline: eToro client with CSV fallback, market providers/screener, frozen snapshot tasks, portfolio bundle with recommendation validator, offline scorer, `portfolio fetch|daily|evolve|score` CLI, and point-in-time historical bootstrap. Task 9 adds `tests/test_portfolio_integration.py` (fake executor/editor through `run_daily` plus one sequential `run_evolution` over three dated tasks; reflected lessons only flow forward) and a `docker`-marked in-container `portfolio_math.py` test in `tests/test_sandbox.py`. Current verification: Python suite 191 passed, 3 skipped; Ruff clean; Pi worker 3 passed and TypeScript build passed. The new Docker test is written and marked correctly but **unverified in this environment** (Docker socket access denied; with `HARNESS_TEST_DOCKER=1` all three docker-marked tests fail on daemon access, and without it the test skips).
+
+Still deferred/unverified, unchanged by Task 9: no paid calls were made, so live portfolio runs (`portfolio daily`/`evolve`) and Task 1's complete live experiment run remain unverified; the eToro live payload shape is fixture-based until confirmed with a real key; `uv.lock` still needs `uv lock && uv sync` outside the sandbox before live equity fetching (`yfinance` is declared and lazily imported). After live verification, operation is daily `portfolio daily`, weekly `portfolio evolve` + `portfolio score`, and the 4-week forward soak as an operational phase before reports inform any manual decision. The sections below predate the portfolio work and describe the earlier harness-clone handoff.
+
 ## Start here
 
 **The implementation is in an isolated worktree, not the top-level checkout:**

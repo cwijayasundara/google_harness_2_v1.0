@@ -51,6 +51,42 @@ The model is fixed to `accounts/fireworks/models/deepseek-v4p1-flash`. Every exe
 
 Live doctor checks cover a tool round trip, structured JSON, streaming, and usage metadata. Executor compaction/restart and complete Pi code-edit behavior require separate container-backed validation; doctor never declares those verified.
 
+## Portfolio agent (recommendations only)
+
+The portfolio commands analyse a frozen daily snapshot of an eToro portfolio and produce research recommendations for the account holder's manual review. **They never place, modify, or cancel orders** — there is no order-placement code path; the only outputs are `recommendations.json` and a human-readable `report.md` per snapshot.
+
+Set both keys in the **host environment only**; the application does not load `.env`, and keys must never enter task sources, candidate bundles, snapshots, or committed files:
+
+```bash
+export ETORO_API_KEY=...       # eToro public API (portfolio fetch)
+export FIREWORKS_API_KEY=...   # Fireworks (model execution in daily/evolve)
+```
+
+Commands (from the repository root; `--base-dir` defaults to `runs/portfolio`):
+
+```bash
+# Fetch today's portfolio + market data into a frozen dated snapshot task (no model calls)
+uv run harness-clone portfolio fetch --base-dir runs/portfolio
+# ...or from a CSV export instead of the live eToro API: --csv /path/to/portfolio.csv
+
+# One execution of the adopted portfolio bundle against today's snapshot (paid; Docker required)
+uv run harness-clone portfolio daily --base-dir runs/portfolio --max-usd 2
+
+# Weekly sequential (k=1) evolution over the five most recent snapshots (paid; Docker required)
+uv run harness-clone portfolio evolve --base-dir runs/portfolio --max-usd 5
+
+# Offline scoring of matured recommendations against later prices (no model calls)
+uv run harness-clone portfolio score --base-dir runs/portfolio --scoreboard /path/to/scoreboard.json
+```
+
+`daily` and `evolve` refuse to run without an explicit nonzero `--max-usd`, a configured `FIREWORKS_API_KEY`, and a running Docker daemon. `daily` executes the currently adopted bundle exactly once and schema-validates its recommendations before recording them; `evolve` runs the Propose–Probe–Compose loop sequentially over the week's snapshots, and a new bundle is adopted only when the final composed execution is delivered and valid — otherwise the previous bundle is kept. Scores are computed offline afterwards and never feed back into evolution directly; only matured outcomes recorded in a prior scoreboard enter later snapshots as `prior_outcomes.json` evidence.
+
+**Privacy:** everything under `runs/` is gitignored. Snapshots contain your holdings, so keep `runs/portfolio` (and any CSV export or scoreboard) out of version control and treat snapshot directories as private financial data.
+
+**Status — read before trusting any output:** live portfolio runs are **unverified and deferred**. No paid `daily`/`evolve` run has been performed, and Task 1's complete live experiment run also remains unverified. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), and `uv.lock` still needs `uv lock && uv sync` outside the sandbox before live equity fetching will work. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
+
+**Operations after setup:** run `portfolio daily` each trading day and `portfolio evolve` + `portfolio score` weekly (scheduling via cron/launchd is your choice). Treat the first **4-week forward soak** (spec milestone 5) as an operational phase, not a code milestone: collect daily recommendations and matured scores for four weeks, review the scoreboard by hand, and only then let the reports inform any manual decision — made by you, outside this tool.
+
 ## How refinement works
 
 Research mode runs k baseline executions, k general INV proposals and k practitioner DOM proposals, their probes, and k composed executions. Sequential mode uses one INV/DOM pair per round and carries the composed harness forward. Parallel mode creates all candidates from shared baseline evidence. The current controller dispatches independent stages serially; its parallel mode describes search width, not simultaneous execution. Cross-domain task streams can be processed concurrently through the Python API.
@@ -132,7 +168,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv sync --frozen
    npm ci --prefix workers/pi
    uv run ruff check .
-   uv run pytest -q            # expect 99 passed, 2 skipped
+   uv run pytest -q            # expect 191 passed, 3 skipped
    npm test --prefix workers/pi
    npm run build --prefix workers/pi
    ```
@@ -154,7 +190,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
 4. **Verify the isolation boundary** (Docker required, still no paid calls):
 
    ```bash
-   HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q   # expect 2 passed
+   HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q   # expect 3 passed
    ```
 
 5. **Live preflight** — real Fireworks calls for tool use, streaming, and structured output; typically costs well under $0.01:
