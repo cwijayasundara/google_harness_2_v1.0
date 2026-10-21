@@ -72,18 +72,25 @@ uv run harness-clone portfolio fetch --base-dir runs/portfolio
 # One execution of the adopted portfolio bundle against today's snapshot (paid; Docker required)
 uv run harness-clone portfolio daily --base-dir runs/portfolio --max-usd 2
 
-# Weekly sequential (k=1) evolution over the five most recent snapshots (paid; Docker required)
+# Weekly sequential (k=1) evolution over the snapshots in --date's ISO week (paid; Docker required)
 uv run harness-clone portfolio evolve --base-dir runs/portfolio --max-usd 5
 
-# Offline scoring of matured recommendations against later prices (no model calls)
+# Offline scoring of delivered daily recommendations against later prices (no model calls)
 uv run harness-clone portfolio score --base-dir runs/portfolio --scoreboard /path/to/scoreboard.json
 ```
+
+Layout under `--base-dir` (all gitignored):
+
+- `<YYYY-MM-DD>/` — the frozen snapshot task (`task.json`, `source/`), plus the delivered `report.md` (with a host-stamped provenance header: bundle digest, execution id, snapshot fetch time and age) and `recommendations.json` once `daily` runs.
+- `runs/daily-<YYYY-MM-DD>/` and `runs/evolve-<YYYY>-W<ww>/` — one fresh run directory per daily run and per ISO-week evolution, so a new snapshot, image, or `--max-usd` never collides with an earlier run and each `--max-usd` caps that invocation only. Re-running the same day or week resumes it; a resumed week replays from the bundle it started with and never replaces a newer adoption.
+- `adopted.json` and `bundles/<digest>/` — the adopted bundle digest and a digest-verified archive of every adopted bundle, imported into each new run directory.
+- `forward/` — the forward record of delivered daily recommendations; `score` reads it by default (override with `--run-dir`). Evolution re-executions never enter it.
 
 `daily` and `evolve` refuse to run without an explicit nonzero `--max-usd`, a configured `FIREWORKS_API_KEY`, and a running Docker daemon. `daily` executes the currently adopted bundle exactly once and schema-validates its recommendations before recording them; `evolve` runs the Propose–Probe–Compose loop sequentially over the week's snapshots, and a new bundle is adopted only when the final composed execution is delivered and valid — otherwise the previous bundle is kept. Scores are computed offline afterwards and never feed back into evolution directly; only matured outcomes recorded in a prior scoreboard enter later snapshots as `prior_outcomes.json` evidence.
 
 **Privacy:** everything under `runs/` is gitignored. Snapshots contain your holdings, so keep `runs/portfolio` (and any CSV export or scoreboard) out of version control and treat snapshot directories as private financial data.
 
-**Status — read before trusting any output:** live portfolio runs are **unverified and deferred**. No paid `daily`/`evolve` run has been performed, and Task 1's complete live experiment run also remains unverified. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), and `uv.lock` still needs `uv lock && uv sync` outside the sandbox before live equity fetching will work. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
+**Status — read before trusting any output:** live portfolio runs are **unverified and deferred**. No paid `daily`/`evolve` run has been performed, and Task 1's complete live experiment run also remains unverified. The eToro live payload shape is fixture-based and unconfirmed against a real key; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
 
 **Operations after setup:** run `portfolio daily` each trading day and `portfolio evolve` + `portfolio score` weekly (scheduling via cron/launchd is your choice). Treat the first **4-week forward soak** (spec milestone 5) as an operational phase, not a code milestone: collect daily recommendations and matured scores for four weeks, review the scoreboard by hand, and only then let the reports inform any manual decision — made by you, outside this tool.
 

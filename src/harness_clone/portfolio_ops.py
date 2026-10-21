@@ -6,10 +6,13 @@ candidate bundle.
 """
 
 import json
+import shutil
+import tempfile
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from .bundles import bundle_digest
 from .contracts import ExecutionRecord, ExperimentConfig, PortfolioSnapshot, TaskSpec
 from .experience import run_stream
 from .portfolio_artifacts import validate_recommendations
@@ -28,6 +31,7 @@ BENCHMARKS: dict[str, str] = {"SPY": "etf", "QQQ": "etf", "BTC": "crypto", "ETH"
 HISTORY_DAYS = 365
 MISSING_SAMPLE = 10
 ADOPTED_FILE = "adopted.json"
+ARCHIVE_DIR = "bundles"
 
 
 def _default_sp500_fetch(url: str) -> str:
@@ -289,21 +293,68 @@ def read_adopted(base_dir: Path) -> str | None:
     return str(digest) if digest else None
 
 
-def write_adopted(base_dir: Path, bundle_digest: str) -> None:
+def archived_bundle(base_dir: Path, digest: str) -> Path:
+    """Where the adopted bundle ``digest`` is kept outside any one run store."""
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError("invalid bundle digest")
+    return Path(base_dir) / ARCHIVE_DIR / digest
+
+
+def archive_bundle(base_dir: Path, store: RunStore, digest: str) -> Path:
+    """Copy ``digest`` from ``store`` into ``<base>/bundles/`` (digest-verified).
+
+    The archive lets every later daily/evolve run directory import the
+    adopted bundle, so no run store has to live forever.
+    """
+    source = store.bundle_path(digest)
+    if not source.is_dir():
+        raise ValueError(f"bundle {digest} is not in the run store {store.root}")
+    dest = archived_bundle(base_dir, digest)
+    if dest.is_dir():
+        if bundle_digest(dest) != digest:
+            raise ValueError(f"archived bundle {digest} does not match its digest")
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
+        stage = Path(tmp) / "bundle"
+        shutil.copytree(source, stage)
+        if bundle_digest(stage) != digest:
+            raise ValueError(f"bundle {digest} changed while archiving")
+        stage.rename(dest)
+    return dest
+
+
+def write_adopted(base_dir: Path, digest: str, store: RunStore) -> None:
+    """Archive ``digest`` from ``store`` and record it as adopted."""
     base_dir = Path(base_dir)
-    base_dir.mkdir(parents=True, exist_ok=True)
-    (base_dir / ADOPTED_FILE).write_text(json.dumps({"bundle_digest": bundle_digest}, indent=2))
+    archive_bundle(base_dir, store, digest)
+    (base_dir / ADOPTED_FILE).write_text(json.dumps({"bundle_digest": digest}, indent=2))
+
+
+def import_bundle(store: RunStore, base_dir: Path, digest: str) -> None:
+    """Make archived bundle ``digest`` available in ``store`` (no-op if present)."""
+    if store.bundle_path(digest).is_dir():
+        return
+    archive = archived_bundle(base_dir, digest)
+    if not archive.is_dir():
+        raise ValueError(f"adopted bundle {digest} is not archived under {archive.parent}")
+    if bundle_digest(archive) != digest or store.publish_bundle(archive) != digest:
+        raise ValueError(f"archived bundle {digest} does not match its digest")
 
 
 def ensure_adopted(store: RunStore, base_dir: Path, bundle_root: Path) -> str:
-    """Return the adopted digest, publishing ``bundle_root`` on first use only."""
+    """Return the adopted digest, available in ``store``.
+
+    On first use ``bundle_root`` is published, archived, and adopted. Later
+    calls import the archived adopted bundle into ``store``, so each daily
+    or weekly run directory can be fresh.
+    """
     existing = read_adopted(base_dir)
     if existing is not None:
-        if not store.bundle_path(existing).is_dir():
-            raise ValueError(f"adopted bundle {existing} is not in the run store")
+        import_bundle(store, base_dir, existing)
         return existing
     digest = store.publish_bundle(Path(bundle_root))
-    write_adopted(base_dir, digest)
+    write_adopted(base_dir, digest, store)
     return digest
 
 

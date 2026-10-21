@@ -17,7 +17,9 @@ from .portfolio_ops import (
     ensure_adopted,
     evolved_digest,
     fetch_task,
+    import_bundle,
     live_price_provider,
+    read_adopted,
     run_daily,
     run_evolution,
     write_adopted,
@@ -27,6 +29,8 @@ from .portfolio_score import PRICE_LOOKBACK_DAYS, window_prices
 from .portfolio_score import scoreboard as portfolio_scoreboard
 from .storage import BudgetLedger, RunStore, fingerprint
 from .tasks import load_task
+
+FORWARD_DIR = "forward"
 
 
 def resolve_image_id(tag: str) -> str:
@@ -167,7 +171,18 @@ def _fetch_or_load_task(args, base_dir: Path, day: date) -> TaskSpec:
     )
 
 
+def _iso_week(day: date) -> str:
+    year, week, _ = day.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
 def _week_tasks(base_dir: Path, day: date) -> list[TaskSpec]:
+    """Snapshots in ``day``'s ISO week dated on or before ``day``.
+
+    Selecting by ISO week (not "last five") keeps weeks disjoint, so each
+    week's evolution has one unambiguous task stream and run directory.
+    """
+    week = day.isocalendar()[:2]
     tasks = []
     if base_dir.is_dir():
         for child in sorted(base_dir.iterdir()):
@@ -175,12 +190,18 @@ def _week_tasks(base_dir: Path, day: date) -> list[TaskSpec]:
                 child_day = date.fromisoformat(child.name)
             except ValueError:
                 continue
-            if child_day <= day and (child / "task.json").is_file():
+            if (
+                child_day <= day
+                and child_day.isocalendar()[:2] == week
+                and (child / "task.json").is_file()
+            ):
                 tasks.append(load_task(child / "task.json"))
     tasks.sort(key=lambda t: t.ordinal)
     if not tasks:
-        raise ValueError(f"no portfolio snapshots found under {base_dir}")
-    return tasks[-5:]
+        raise ValueError(
+            f"no portfolio snapshots found for ISO week {_iso_week(day)} under {base_dir}"
+        )
+    return tasks
 
 
 def _record_daily_result(store: RunStore, task: TaskSpec, record) -> None:
@@ -270,18 +291,20 @@ def run_portfolio(args) -> dict:
             for warning in warnings:
                 print(f"harness-clone: warning: {warning}", file=sys.stderr)
         return report
-    run_dir: Path = args.run_dir or (base_dir / "run")
     if args.portfolio_command == "score":
-        return _portfolio_score(args, run_dir, day)
+        return _portfolio_score(args, args.run_dir or (base_dir / FORWARD_DIR), day)
     cap = _admit_live(args.max_usd)
-    store = RunStore(run_dir)
-    digest = ensure_adopted(store, base_dir, portfolio_bundle())
     if args.portfolio_command == "daily":
+        # One run directory per date: a changed snapshot or image never
+        # collides with an earlier day, and --max-usd caps this run only.
+        store = RunStore(args.run_dir or (base_dir / "runs" / f"daily-{day.isoformat()}"))
+        digest = ensure_adopted(store, base_dir, portfolio_bundle())
         config = _pinned_config(cap)
         task = _fetch_or_load_task(args, base_dir, day)
         executor, _factory = live_components(config, store)
         record = run_daily(store, executor, task, digest)
-        _record_daily_result(store, task, record)
+        # The forward scoreboard reads only delivered daily recommendations.
+        _record_daily_result(RunStore(base_dir / FORWARD_DIR), task, record)
         report_path = write_delivered_report(task, record, datetime.now(timezone.utc))
         return {
             "task": task.id,
@@ -289,7 +312,18 @@ def run_portfolio(args) -> dict:
             "delivered": record.delivered,
             "bundle_digest": digest,
             "report": str(report_path),
+            "run_dir": str(store.root),
         }
+    # One run directory per ISO week. A resumed week replays from the base
+    # it started with; only a week that began from the currently adopted
+    # bundle may replace it, so rerunning an old week never regresses.
+    store = RunStore(args.run_dir or (base_dir / "runs" / f"evolve-{_iso_week(day)}"))
+    started = store.get("stream", "signature")
+    if started:
+        digest = started["base"]
+        import_bundle(store, base_dir, digest)
+    else:
+        digest = ensure_adopted(store, base_dir, portfolio_bundle())
     config = _pinned_config(cap, mode="sequential", k=1)
     tasks = _week_tasks(base_dir, day)
     store.put("runtime", "kind", {"backend": "deepagents-fireworks"})
@@ -298,10 +332,22 @@ def run_portfolio(args) -> dict:
     results = run_evolution(tasks, config, store, executor, factory, digest)
     store.put("runtime", "results", [r.model_dump(mode="json") for r in results])
     adopted = evolved_digest(results, tasks, digest)
-    if adopted != digest:
-        write_adopted(base_dir, adopted)
     report = summarize(results, "deepagents-fireworks")
-    report.update({"previous_bundle_digest": digest, "adopted_bundle_digest": adopted})
+    if adopted != digest:
+        current = read_adopted(base_dir)
+        if current in (None, digest):
+            write_adopted(base_dir, adopted, store)
+        else:
+            report["adoption_skipped"] = (
+                f"adopted bundle moved to {current} after this week began; kept it"
+            )
+    report.update(
+        {
+            "previous_bundle_digest": digest,
+            "adopted_bundle_digest": adopted,
+            "run_dir": str(store.root),
+        }
+    )
     return report
 
 

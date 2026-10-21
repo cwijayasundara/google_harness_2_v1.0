@@ -464,3 +464,36 @@ def test_fetch_task_holding_fetch_failure_still_aborts(tmp_path):
             crypto_get=_fake_crypto_get,
         )
     assert not (tmp_path / "snapshots" / DAY.isoformat()).exists()
+
+
+def test_ensure_adopted_imports_archived_bundle_into_a_fresh_store(tmp_path, store):
+    from pathlib import Path
+
+    from harness_clone.portfolio_ops import archived_bundle, ensure_adopted
+
+    bundle_root = Path(__file__).resolve().parents[1] / "examples" / "portfolio-harness"
+    base_dir = tmp_path / "portfolio"
+    digest = ensure_adopted(store, base_dir, bundle_root)
+    assert archived_bundle(base_dir, digest).is_dir()
+    fresh = RunStore(tmp_path / "week2")
+    assert not fresh.bundle_path(digest).exists()
+    assert ensure_adopted(fresh, base_dir, tmp_path / "unused") == digest
+    assert fresh.bundle_path(digest).is_dir()
+
+
+def test_ensure_adopted_refuses_tampered_or_missing_archive(tmp_path, store):
+    import shutil
+    from pathlib import Path
+
+    from harness_clone.portfolio_ops import archived_bundle, ensure_adopted
+
+    bundle_root = Path(__file__).resolve().parents[1] / "examples" / "portfolio-harness"
+    base_dir = tmp_path / "portfolio"
+    digest = ensure_adopted(store, base_dir, bundle_root)
+    archive = archived_bundle(base_dir, digest)
+    (archive / "system.md").write_text("tampered")
+    with pytest.raises(ValueError, match="digest"):
+        ensure_adopted(RunStore(tmp_path / "a"), base_dir, bundle_root)
+    shutil.rmtree(archive)
+    with pytest.raises(ValueError, match="not archived"):
+        ensure_adopted(RunStore(tmp_path / "b"), base_dir, bundle_root)
