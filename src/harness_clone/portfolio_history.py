@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from .contracts import PortfolioSnapshot, TaskSpec
-from .portfolio_market import COIN_IDS, PriceProvider, market_summary, screen_candidates
+from .portfolio_market import COIN_IDS, DatedPriceProvider, market_summary, screen_candidates
 from .portfolio_snapshot import build_snapshot_task
 
 # Matches the live fetch window in portfolio_ops so historical summaries
@@ -40,15 +40,15 @@ def build_history(
     base: Path,
     days: list[date],
     tickers: list[str],
-    provider: PriceProvider,
+    provider: DatedPriceProvider,
     proxy_portfolio: PortfolioSnapshot,
 ) -> list[TaskSpec]:
     """Build one point-in-time snapshot task per day in ``days``.
 
-    Only closes ending on or before each day enter that day's snapshot:
-    every series is requested with ``end=day``, and a provider returning
-    more closes than the requested bounded window cannot be shown to end
-    by that day, so it raises ``ValueError`` before any task is written.
+    Only closes dated on or before each day enter that day's snapshot:
+    every series is requested with ``end=day`` as dated closes, and a
+    provider returning any close dated after that day raises
+    ``ValueError`` before any task is written.
     """
     unique_tickers = list(dict.fromkeys(tickers))
     tasks: list[TaskSpec] = []
@@ -56,14 +56,15 @@ def build_history(
         summaries = {}
         for ticker in unique_tickers:
             asset_class = _asset_class(ticker, proxy_portfolio)
-            closes = provider.closes(ticker, asset_class, day, HISTORY_DAYS)
-            if len(closes) > HISTORY_DAYS:
+            dated = provider.dated_closes(ticker, asset_class, day, HISTORY_DAYS)
+            late = [d for d, _ in dated if d > day]
+            if late:
                 raise ValueError(
-                    f"closes for {ticker} exceed the {HISTORY_DAYS}-day window "
-                    f"ending {day.isoformat()}; series end cannot be verified "
-                    "as on or before that day"
+                    f"closes for {ticker} include {max(late).isoformat()}, after the "
+                    f"snapshot day {day.isoformat()}; refusing look-ahead data"
                 )
-            summaries[ticker] = market_summary(ticker, asset_class, list(closes))
+            closes = [value for _, value in sorted(dated)]
+            summaries[ticker] = market_summary(ticker, asset_class, closes)
         candidates = screen_candidates(list(summaries.values()))
         tasks.append(
             build_snapshot_task(

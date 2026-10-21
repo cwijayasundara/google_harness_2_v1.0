@@ -21,6 +21,7 @@ from .portfolio_ops import (
     run_evolution,
     write_adopted,
 )
+from .portfolio_score import PRICE_LOOKBACK_DAYS, window_prices
 from .portfolio_score import scoreboard as portfolio_scoreboard
 from .storage import BudgetLedger, RunStore, fingerprint
 from .tasks import load_task
@@ -241,8 +242,8 @@ def _portfolio_score(args, run_dir: Path, day: date) -> dict:
     }
 
     def prices(ticker: str, asset_class: str, start: date, end: date):
-        values = provider.closes(ticker, asset_class, end, max((end - start).days + 1, 1))
-        return (values[0], values[-1]) if values else None
+        days = max((end - start).days, 0) + PRICE_LOOKBACK_DAYS
+        return window_prices(provider.dated_closes(ticker, asset_class, end, days), start, end)
 
     return portfolio_scoreboard(run_dir, out, day, prices, volatilities)
 

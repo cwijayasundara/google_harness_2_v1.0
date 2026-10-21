@@ -155,6 +155,10 @@ def test_portfolio_score_prices_route_by_asset_class(tmp_path, monkeypatch, caps
             closes_calls.append((ticker, asset_class))
             return [100.0, 110.0]
 
+        def dated_closes(self, ticker, asset_class, end, days):
+            closes_calls.append((ticker, asset_class))
+            return [(date(2026, 10, 14), 100.0), (end, 110.0)]
+
     def fake_scoreboard(run_root, out_path, today, prices, volatilities):
         # A screened crypto ticker must reach the provider as crypto.
         assert prices("SOL", "crypto", date(2026, 10, 14), today) == (100.0, 110.0)
@@ -180,3 +184,42 @@ def test_portfolio_score_prices_route_by_asset_class(tmp_path, monkeypatch, caps
     )
     assert ("SOL", "crypto") in closes_calls
     assert ("AAPL", "equity") in closes_calls
+
+
+def test_portfolio_score_prices_span_task_date_to_maturity_across_weekend(
+    tmp_path, monkeypatch, capsys
+):
+    from datetime import timedelta
+
+    import harness_clone.cli as cli
+
+    run_dir = tmp_path / "run"
+    out = tmp_path / "scoreboard.json"
+
+    def price_on(day):
+        return float(day.toordinal() - date(2026, 10, 1).toordinal() + 100)
+
+    class DatedProvider:
+        def closes(self, ticker, asset_class, end, days):
+            return [v for _, v in self.dated_closes(ticker, asset_class, end, days)]
+
+        def dated_closes(self, ticker, asset_class, end, days):
+            out, day = [], end - timedelta(days=days)
+            while day <= end + timedelta(days=5):  # a leaky provider: beyond end
+                if day.weekday() < 5:
+                    out.append((day, price_on(day)))
+                day += timedelta(days=1)
+            return out
+
+    seen = {}
+
+    def fake_scoreboard(run_root, out_path, today, prices, volatilities):
+        seen["window"] = prices("AAPL", "equity", date(2026, 10, 18), date(2026, 10, 25))
+        return {"generated_at": today.isoformat(), "matured": 0, "pending": 0}
+
+    monkeypatch.setattr(cli, "portfolio_scoreboard", fake_scoreboard)
+    monkeypatch.setattr(cli, "live_price_provider", lambda: DatedProvider())
+    args = ["portfolio", "score", "--run-dir", str(run_dir), "--scoreboard", str(out)]
+    assert cli.main([*args, "--date", "2026-10-28"]) == 0
+    # Friday 10-16 close (on/before the Sunday call) to Friday 10-23 close.
+    assert seen["window"] == (price_on(date(2026, 10, 16)), price_on(date(2026, 10, 23)))

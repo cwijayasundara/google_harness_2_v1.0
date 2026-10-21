@@ -52,9 +52,14 @@ class RoutedPriceProvider:
         self._equity = equity_provider
         self._crypto = crypto_provider
 
+    def _route(self, asset_class: str):
+        return self._crypto if asset_class == "crypto" else self._equity
+
     def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
-        provider = self._crypto if asset_class == "crypto" else self._equity
-        return provider.closes(ticker, asset_class, end, days)
+        return self._route(asset_class).closes(ticker, asset_class, end, days)
+
+    def dated_closes(self, ticker: str, asset_class: str, end: date, days: int):
+        return self._route(asset_class).dated_closes(ticker, asset_class, end, days)
 
 
 def live_price_provider() -> RoutedPriceProvider:

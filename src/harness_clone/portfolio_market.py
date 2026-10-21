@@ -38,11 +38,41 @@ COIN_IDS = {
 }
 
 
+DatedClose = tuple[date, float]
+
+
 @runtime_checkable
 class PriceProvider(Protocol):
     def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
         """Daily closes oldest -> newest, bounded by ``end`` (point-in-time)."""
         ...
+
+
+@runtime_checkable
+class DatedPriceProvider(PriceProvider, Protocol):
+    def dated_closes(
+        self, ticker: str, asset_class: str, end: date, days: int
+    ) -> list[DatedClose]:
+        """``(date, close)`` pairs oldest -> newest for ``end - days <= date <= end``.
+
+        ``days`` counts calendar days for every provider, so equity and
+        crypto windows cover the same span.
+        """
+        ...
+
+
+def _as_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def bound_dated(points: list[DatedClose], end: date, days: int) -> list[DatedClose]:
+    """Keep only closes dated within ``[end - days, end]``, oldest first."""
+    start = end - timedelta(days=days)
+    return sorted((d, v) for d, v in points if start <= d <= end)
 
 
 def _pct_return(closes: list[float], lookback: int) -> float:
@@ -122,28 +152,15 @@ def screen_candidates(summaries: list[MarketSummary], limit: int = 30) -> list[C
     return [candidate for _, candidate in scored[:limit]]
 
 
-def _yfinance_period(days: int) -> str:
-    for limit, period in (
-        (1, "1d"),
-        (5, "5d"),
-        (30, "1mo"),
-        (90, "3mo"),
-        (180, "6mo"),
-        (365, "1y"),
-        (730, "2y"),
-        (1825, "5y"),
-        (3650, "10y"),
-    ):
-        if days <= limit:
-            return period
-    return "max"
-
-
 class YFinanceProvider:
     """Equity/ETF closes via yfinance, with an injectable ticker factory.
 
     ``ticker_factory`` defaults to ``yfinance.Ticker`` imported lazily on
-    first use, so importing this module never requires yfinance.
+    first use, so importing this module never requires yfinance. History is
+    requested by explicit ``start``/``end`` dates (never ``period``, which
+    some yfinance versions let override ``end``); yfinance's ``end`` is
+    exclusive, so the request ends the day after ``end`` and every returned
+    close is then filtered to ``<= end`` by its own date.
     """
 
     def __init__(self, ticker_factory: Callable | None = None) -> None:
@@ -156,21 +173,37 @@ class YFinanceProvider:
             self._ticker_factory = yfinance.Ticker
         return self._ticker_factory
 
-    def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
-        history = self._factory()(ticker).history(period=_yfinance_period(days), end=end)
+    def dated_closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[DatedClose]:
+        symbol = ticker.replace(".", "-")  # Wikipedia BRK.B -> yfinance BRK-B
+        history = self._factory()(symbol).history(
+            start=end - timedelta(days=days), end=end + timedelta(days=1)
+        )
         if history is None:
             return []
-        close = history["Close"] if isinstance(history, dict) else getattr(history, "Close", None)
-        if close is None and not isinstance(history, dict):
-            try:
-                close = history["Close"]
-            except Exception:
-                close = None
+        try:
+            close = history["Close"]
+        except (KeyError, TypeError, IndexError):
+            close = getattr(history, "Close", None)
         if close is None:
             return []
         values = close.tolist() if hasattr(close, "tolist") else list(close)
-        result = [float(v) for v in values]
-        return result[-days:] if days > 0 else result
+        if not values:
+            return []
+        index = getattr(close, "index", None)
+        if index is None or callable(index):
+            raise ValueError(f"yfinance returned undated closes for {ticker}")
+        index = list(index)
+        if len(index) != len(values):
+            raise ValueError(f"yfinance returned misaligned dated closes for {ticker}")
+        points = [
+            (_as_date(stamp), float(value))
+            for stamp, value in zip(index, values, strict=True)
+            if value == value  # drop NaN rows
+        ]
+        return bound_dated(points, end, days)
+
+    def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
+        return [value for _, value in self.dated_closes(ticker, asset_class, end, days)]
 
 
 def _default_coingecko_get(url: str, params: dict) -> dict:
@@ -196,7 +229,15 @@ class CoinGeckoProvider:
         self._get = get or _default_coingecko_get
         self._coin_ids = {**COIN_IDS, **(coin_ids or {})}
 
+    def add_coin_ids(self, coin_ids: dict[str, str]) -> None:
+        """Register symbol -> CoinGecko id pairs (e.g. from ``/coins/markets``)."""
+        for symbol, coin_id in coin_ids.items():
+            self._coin_ids.setdefault(symbol.upper(), coin_id)
+
     def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
+        return [value for _, value in self.dated_closes(ticker, asset_class, end, days)]
+
+    def dated_closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[DatedClose]:
         coin_id = self._coin_ids.get(ticker.upper(), ticker.lower())
         to_ts = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp())
         start = end - timedelta(days=days)
@@ -207,8 +248,12 @@ class CoinGeckoProvider:
         )
         prices = payload.get("prices", []) if isinstance(payload, dict) else []
         cutoff_ms = to_ts * 1000
-        result = [float(point[1]) for point in prices if len(point) >= 2 and point[0] <= cutoff_ms]
-        return result[-days:] if days > 0 else result
+        points = [
+            (datetime.fromtimestamp(point[0] / 1000, tz=timezone.utc).date(), float(point[1]))
+            for point in prices
+            if len(point) >= 2 and point[0] <= cutoff_ms
+        ]
+        return bound_dated(points, end, days)
 
 
 class _FirstTableParser(HTMLParser):

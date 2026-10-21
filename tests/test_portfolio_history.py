@@ -18,11 +18,17 @@ class FakeProvider:
     def price_on(self, ticker, day):
         return 100.0 + (day - EPOCH).days
 
-    def closes(self, ticker, asset_class, end, days):
+    def dated_closes(self, ticker, asset_class, end, days):
         self.calls.append((ticker, asset_class, end, days))
-        series = [self.price_on(ticker, EPOCH + timedelta(days=i)) for i in range(400)]
+        series = [
+            (EPOCH + timedelta(days=i), self.price_on(ticker, EPOCH + timedelta(days=i)))
+            for i in range(400)
+        ]
         upto = (end - EPOCH).days + 1
         return series[:upto][-days:]
+
+    def closes(self, ticker, asset_class, end, days):
+        return [v for _, v in self.dated_closes(ticker, asset_class, end, days)]
 
 
 @pytest.fixture
@@ -93,10 +99,10 @@ def test_history_live_snapshot_has_no_proxy_flag_by_default(tmp_path, fake_provi
 
 def test_history_rejects_series_longer_than_requested_window(tmp_path):
     class LeakyProvider:
-        def closes(self, ticker, asset_class, end, days):
-            # Ignores the end/days bound: returns more closes than requested,
-            # so the series cannot be shown to end on or before ``end``.
-            return [100.0] * (days + 10)
+        def dated_closes(self, ticker, asset_class, end, days):
+            # Ignores the end bound: the series runs past ``end``, so it
+            # would leak closes from after the snapshot date.
+            return [(end - timedelta(days=i), 100.0) for i in range(3, -3, -1)]
 
     with pytest.raises(ValueError):
         build_history(tmp_path, [date(2026, 9, 1)], ["AAPL"], LeakyProvider(), proxy())
@@ -105,7 +111,7 @@ def test_history_rejects_series_longer_than_requested_window(tmp_path):
 
 def test_history_empty_ticker_data_is_flagged_missing(tmp_path, fake_provider):
     class EmptyProvider:
-        def closes(self, ticker, asset_class, end, days):
+        def dated_closes(self, ticker, asset_class, end, days):
             return []
 
     tasks = build_history(tmp_path, [date(2026, 9, 1)], ["AAPL"], EmptyProvider(), proxy())

@@ -106,25 +106,64 @@ def test_screen_empty_and_all_missing():
     assert screen_candidates([missing("CCC")]) == []
 
 
-def test_yfinance_provider_uses_injected_factory_and_truncates():
+class FakeSeries:
+    """Minimal pandas-like close series: a dated index plus ``tolist``."""
+
+    def __init__(self, points):
+        self.index = [datetime(d.year, d.month, d.day, 16, 0) for d, _ in points]
+        self._values = [v for _, v in points]
+
+    def tolist(self):
+        return list(self._values)
+
+
+def test_yfinance_provider_requests_calendar_window_with_inclusive_end():
     calls = {}
+    points = [(END - timedelta(days=i), 10.0 + i) for i in range(5, -2, -1)]
 
     class FakeTicker:
-        def history(self, *, period, end):
-            calls["period"] = period
-            calls["end"] = end
-            return {"Close": [10.0, 11.0, 12.0, 13.0]}
+        def history(self, *, start, end):
+            calls.update(start=start, end=end)
+            return {"Close": FakeSeries(points)}
 
     provider = YFinanceProvider(ticker_factory=lambda ticker: FakeTicker())
-    assert provider.closes("AAPL", "equity", END, days=3) == [11.0, 12.0, 13.0]
-    assert calls["end"] == END
-    assert calls["period"]
+    dated = provider.dated_closes("AAPL", "equity", END, days=3)
+    # yfinance's end is exclusive: request end+1 day, then drop anything after END.
+    assert calls == {"start": END - timedelta(days=3), "end": END + timedelta(days=1)}
+    assert dated == [(END - timedelta(days=i), 10.0 + i) for i in (3, 2, 1, 0)]
+    assert provider.closes("AAPL", "equity", END, days=3) == [13.0, 12.0, 11.0, 10.0]
+
+
+def test_yfinance_provider_normalises_share_class_symbols():
+    seen = []
+
+    class FakeTicker:
+        def history(self, *, start, end):
+            return {"Close": FakeSeries([])}
+
+    def factory(symbol):
+        seen.append(symbol)
+        return FakeTicker()
+
+    YFinanceProvider(ticker_factory=factory).closes("BRK.B", "equity", END, days=3)
+    assert seen == ["BRK-B"]
+
+
+def test_yfinance_provider_refuses_undated_closes():
+    class FakeTicker:
+        def history(self, *, start, end):
+            return {"Close": [10.0, 11.0]}
+
+    with pytest.raises(ValueError, match="dated"):
+        YFinanceProvider(ticker_factory=lambda ticker: FakeTicker()).closes(
+            "AAPL", "equity", END, days=3
+        )
 
 
 def test_yfinance_provider_handles_empty_history():
     class FakeTicker:
-        def history(self, *, period, end):
-            return {"Close": []}
+        def history(self, *, start, end):
+            return {"Close": FakeSeries([])}
 
     provider = YFinanceProvider(ticker_factory=lambda ticker: FakeTicker())
     assert provider.closes("AAPL", "equity", END, days=30) == []
@@ -135,7 +174,8 @@ def test_coingecko_provider_uses_injected_get():
 
     def fake_get(url, params):
         calls.append((url, params))
-        return {"prices": [[0, 100.0], [86400000, 101.0], [172800000, 102.0]]}
+        day_ms = int(datetime(2026, 10, 19, tzinfo=timezone.utc).timestamp() * 1000)
+        return {"prices": [[day_ms + i * 86400000, 100.0 + i] for i in range(3)]}
 
     provider = CoinGeckoProvider(get=fake_get)
     assert provider.closes("BTC", "crypto", END, days=30) == [100.0, 101.0, 102.0]
@@ -163,6 +203,10 @@ def test_coingecko_provider_bounds_closes_by_end():
     provider = CoinGeckoProvider(get=fake_get)
     # No returned close is from after END, and the request itself is bounded.
     assert provider.closes("BTC", "crypto", END, days=30) == [100.0, 101.0]
+    assert provider.dated_closes("BTC", "crypto", END, days=30) == [
+        (END - timedelta(days=1), 100.0),
+        (END, 101.0),
+    ]
     url, params = calls[0]
     assert "market_chart/range" in url
     expected_to = int(datetime(END.year, END.month, END.day, tzinfo=timezone.utc).timestamp())

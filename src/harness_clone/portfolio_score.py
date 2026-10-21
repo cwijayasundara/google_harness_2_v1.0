@@ -13,6 +13,30 @@ from .storage import RunStore
 PriceFn = Callable[[str, str, date, date], tuple[float, float] | None]
 
 MIN_MATURED_ACTIVE = 20
+# Calendar days fetched before a call's task date, so a close on or before
+# it exists across weekends and market holidays.
+PRICE_LOOKBACK_DAYS = 7
+
+
+def window_prices(
+    series: list[tuple[date, float]], start: date, end: date
+) -> tuple[float, float] | None:
+    """Entry and exit closes for a call made on ``start`` maturing on ``end``.
+
+    Entry is the last close dated on or before ``start`` (the price the
+    recommendation could actually see); exit is the last close dated after
+    the entry close and on or before ``end``. Closes after ``end`` are never
+    used. Either missing returns ``None`` (unscored), never a guess.
+    """
+    points = sorted(series)
+    entry = [p for p in points if p[0] <= start]
+    if not entry:
+        return None
+    entry_day, entry_close = entry[-1]
+    exits = [p for p in points if entry_day < p[0] <= end]
+    if not exits:
+        return None
+    return entry_close, exits[-1][1]
 
 
 class ScoredCall(Record):

@@ -273,3 +273,34 @@ def test_split_windows():
     evolvable, holdout = split_windows(days, holdout=2)
     assert evolvable == days[:2] and holdout == days[2:]
     assert split_windows(days, holdout=0) == (days, [])
+
+
+# --- I-3: score windows align to task_date and maturity on dated closes ---
+def _trading_series(start, end, price_on):
+    """Weekday-only dated closes, like an equity exchange calendar."""
+    from datetime import timedelta
+
+    out, day = [], start
+    while day <= end:
+        if day.weekday() < 5:
+            out.append((day, price_on(day)))
+        day += timedelta(days=1)
+    return out
+
+
+def test_window_prices_use_close_on_or_before_task_date_and_maturity():
+    from harness_clone.portfolio_score import window_prices
+
+    def price_on(day):
+        return float(day.toordinal() - date(2026, 10, 1).toordinal() + 100)
+
+    series = _trading_series(date(2026, 9, 1), date(2026, 10, 30), price_on)
+    # Sunday task date -> Friday 2026-10-16 close; Sunday maturity -> Friday 10-23.
+    start, end = window_prices(series, date(2026, 10, 18), date(2026, 10, 25))
+    assert start == price_on(date(2026, 10, 16))
+    assert end == price_on(date(2026, 10, 23))
+    # Nothing after maturity is ever used, and a missing pre-start close is unscored.
+    assert window_prices(series, date(2026, 8, 1), date(2026, 8, 8)) is None
+    assert window_prices([], date(2026, 10, 18), date(2026, 10, 25)) is None
+    # No close strictly inside the window after the start close: unscored.
+    assert window_prices(series, date(2026, 10, 17), date(2026, 10, 18)) is None
