@@ -23,7 +23,7 @@ npm ci --prefix workers/pi
 
 ```bash
 uv run ruff check .
-uv run pytest -q                       # expect 222 passed, 3 skipped
+uv run pytest -q                       # expect 244 passed, 3 skipped
 uv run harness-clone doctor            # offline environment report
 uv run harness-clone demo --run-dir runs/demo-parallel --mode parallel --k 2
 uv run harness-clone inspect --run-dir runs/demo-parallel
@@ -94,6 +94,28 @@ All portfolio commands default to `--base-dir runs/portfolio` and today's date; 
 - `stream inputs changed` or `incompatible experiment configuration`: the task, sources, images, or `--max-usd` differ from what that run directory started with. Use a new `--run-dir`.
 - `live execution requires a key and nonzero spending cap`: export `FIREWORKS_API_KEY` and pass a nonzero `--max-usd`.
 - Images rebuilt mid-experiment: start a fresh `--run-dir`; resume rejects changed image IDs by design.
+
+## Portfolio Cockpit (UI)
+
+A local web UI for the portfolio agent. It is research-only like the CLI: nothing in it can place, modify, or cancel orders.
+
+```bash
+scripts/setup.sh --demo        # infra: Python env, Node packages, Docker images, plus synthetic demo data
+scripts/start-backend.sh --demo   # API on http://127.0.0.1:8765, serving runs/portfolio-demo
+scripts/start-frontend.sh      # UI on http://127.0.0.1:5173
+```
+
+Drop `--demo` from `start-backend.sh` to work on your real `runs/portfolio`. `setup.sh --no-docker` skips the image build if you only want to browse. The backend reads `FIREWORKS_API_KEY` and `ETORO_API_KEY` from the shell you start it in, and the UI shows only whether each key is set.
+
+What's on screen:
+
+- **Time machine**: every frozen snapshot, grouped by ISO week, with a tick per active call and a flag on weeks that ran evolution. Use ← / → to scrub.
+- **Portfolio map**: a treemap sized by weight and coloured by unrealised P&L. **Now ⇄ Proposed** morphs it into the agent's target weights, so trims shrink, exits vanish, new ideas appear dashed, and cash absorbs the rest. **Table** shows the same numbers as rows.
+- **Agent calls**: one card per active call with current → target weight, thesis, invalidation and benchmark. Hover an evidence ref (for example `market:AAPL.return_30d_pct`) to see the snapshot value it cites. Hovering a card highlights that holding on the map.
+- **Report / Market & candidates / Scoreboard / Evolution**: the delivered `report.md` (sanitised before rendering), the market summaries and screened candidates with coverage counts, the hit rate and excess return of matured calls, and the weekly bundle lineage.
+- **Mission control** (bottom right): runs `portfolio fetch` (paste or upload a CSV, or use the eToro API), `daily`, `evolve` and `score` as background jobs with a live log. Paid commands need a typed spending cap (at most $25 from the UI) and a confirmation tick, and only one job runs at a time.
+
+Safety rails: the API binds only to a loopback address and refuses any other `--host`. Demo directories (marked with `.demo`) are read-only, so the API refuses every job on them. The seeder never replaces a directory without that marker.
 
 ## Install and try the offline demo
 
@@ -262,7 +284,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv sync --frozen
    npm ci --prefix workers/pi
    uv run ruff check .
-   uv run pytest -q            # expect 222 passed, 3 skipped
+   uv run pytest -q            # expect 244 passed, 3 skipped
    npm test --prefix workers/pi
    npm run build --prefix workers/pi
    ```

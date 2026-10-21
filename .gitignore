@@ -9,3 +9,4 @@ runs/
 node_modules/
 dist/
 *.egg-info/
+*.tsbuildinfo
