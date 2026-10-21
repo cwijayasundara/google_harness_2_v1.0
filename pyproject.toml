@@ -19,7 +19,7 @@ packages = ["src/harness_clone"]
 dev = ["pytest>=9,<10", "ruff>=0.15,<0.16"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 markers = ["docker: requires an accessible Docker daemon"]
 
