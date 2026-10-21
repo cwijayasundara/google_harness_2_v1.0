@@ -1,0 +1,1 @@
+Inspect the current dated snapshot sources. Prior examples and prior outcomes do not establish current facts. Respect the stated constraints: max 20% single-position target weight, max 5 non-hold calls/day, recommendations only, research-only and not financial advice.

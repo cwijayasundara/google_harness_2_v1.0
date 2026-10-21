@@ -197,3 +197,15 @@ class Candidate(Record):
     asset_class: str
     score: float
     metrics: dict[str, float]
+
+
+class Recommendation(Record):
+    ticker: str = Field(min_length=1)
+    asset_class: str = Field(min_length=1)
+    action: Literal["hold", "trim", "add", "new_idea", "exit"]
+    target_weight_pct: float = Field(ge=0)
+    horizon_days: int = Field(ge=1)
+    thesis: str = ""
+    invalidation: str = ""
+    benchmark: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(default_factory=list)

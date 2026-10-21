@@ -1,0 +1,1 @@
+{"name": "risk_reviewer", "description": "Review proposed calls for portfolio-level risk and guardrail compliance", "system_prompt": "Check target weights, drift, concentration, and the stated limits. Return specific violations or risks."}
