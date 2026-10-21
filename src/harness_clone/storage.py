@@ -1,4 +1,5 @@
 """Transactional run metadata and immutable, digest-verified artifacts."""
+
 import hashlib
 import json
 import shutil
@@ -13,7 +14,9 @@ from .contracts import ExecutionRecord, ExperimentConfig, Usage
 
 
 def fingerprint(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
 
 
 class Database:
@@ -21,7 +24,9 @@ class Database:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, value TEXT NOT NULL, PRIMARY KEY(kind,id))")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, value TEXT NOT NULL, PRIMARY KEY(kind,id))"
+            )
 
     @contextmanager
     def transaction(self):
@@ -38,12 +43,17 @@ class Database:
 
     def get(self, kind, key):
         with self.transaction() as db:
-            row = db.execute("SELECT value FROM records WHERE kind=? AND id=?", (kind, key)).fetchone()
+            row = db.execute(
+                "SELECT value FROM records WHERE kind=? AND id=?", (kind, key)
+            ).fetchone()
         return json.loads(row[0]) if row else None
 
     def put(self, kind, key, value):
         with self.transaction() as db:
-            db.execute("INSERT OR REPLACE INTO records VALUES(?,?,?)", (kind, key, json.dumps(value, sort_keys=True, default=str)))
+            db.execute(
+                "INSERT OR REPLACE INTO records VALUES(?,?,?)",
+                (kind, key, json.dumps(value, sort_keys=True, default=str)),
+            )
 
 
 class RunStore(Database):
@@ -57,10 +67,15 @@ class RunStore(Database):
         data = config.model_dump(mode="json")
         identity = fingerprint(data)
         with self.transaction() as db:
-            row = db.execute("SELECT value FROM records WHERE kind='experiment' AND id='config'").fetchone()
+            row = db.execute(
+                "SELECT value FROM records WHERE kind='experiment' AND id='config'"
+            ).fetchone()
             if row and json.loads(row[0]) != data:
                 raise ValueError("incompatible experiment configuration; use a new run directory")
-            db.execute("INSERT OR IGNORE INTO records VALUES('experiment','config',?)", (json.dumps(data, sort_keys=True),))
+            db.execute(
+                "INSERT OR IGNORE INTO records VALUES('experiment','config',?)",
+                (json.dumps(data, sort_keys=True),),
+            )
         return identity
 
     def bundle_path(self, digest: str) -> Path:
@@ -89,12 +104,17 @@ class RunStore(Database):
     def save_execution(self, record: ExecutionRecord) -> None:
         value = record.model_dump(mode="json")
         with self.transaction() as db:
-            row = db.execute("SELECT value FROM records WHERE kind='execution' AND id=?", (record.execution_id,)).fetchone()
+            row = db.execute(
+                "SELECT value FROM records WHERE kind='execution' AND id=?", (record.execution_id,)
+            ).fetchone()
             if row:
                 old = ExecutionRecord.model_validate_json(row[0])
                 if old.status == "completed" and old != record:
                     raise ValueError("completed execution is immutable")
-            db.execute("INSERT OR REPLACE INTO records VALUES('execution',?,?)", (record.execution_id, json.dumps(value, sort_keys=True)))
+            db.execute(
+                "INSERT OR REPLACE INTO records VALUES('execution',?,?)",
+                (record.execution_id, json.dumps(value, sort_keys=True)),
+            )
 
     def completed_execution(self, execution_id: str) -> ExecutionRecord | None:
         value = self.get("execution", execution_id)
@@ -113,7 +133,9 @@ class BudgetLedger(Database):
         super().__init__(path)
         self.cap = cap
         with self.transaction() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS budget (id TEXT PRIMARY KEY, ceiling TEXT NOT NULL, usage TEXT)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS budget (id TEXT PRIMARY KEY, ceiling TEXT NOT NULL, usage TEXT)"
+            )
 
     def reserve(self, stage_id: str, ceiling_usd: Decimal) -> None:
         if ceiling_usd <= 0:
@@ -148,4 +170,22 @@ class BudgetLedger(Database):
         with self.transaction() as db:
             rows = db.execute("SELECT ceiling,usage FROM budget").fetchall()
         usages = [Usage.model_validate_json(u) for _, u in rows if u]
-        return {"cap":str(self.cap), "spent":str(sum((u.usd for u in usages), Decimal(0))), "reserved":str(sum((Decimal(c) for c,u in rows if not u), Decimal(0))), "unknown":any(not u.known for u in usages)}
+        return {
+            "cap": str(self.cap),
+            "spent": str(sum((u.usd for u in usages), Decimal(0))),
+            "reserved": str(sum((Decimal(c) for c, u in rows if not u), Decimal(0))),
+            "unknown": any(not u.known for u in usages),
+        }
+
+    def usage_for(self, stage_id: str) -> Usage:
+        with self.transaction() as db:
+            rows = db.execute("SELECT id,usage FROM budget").fetchall()
+        selected = [encoded for name, encoded in rows if name.startswith(stage_id + "/")]
+        values = [Usage.model_validate_json(encoded) for encoded in selected if encoded]
+        return Usage(
+            input_tokens=sum(u.input_tokens for u in values),
+            cached_tokens=sum(u.cached_tokens for u in values),
+            output_tokens=sum(u.output_tokens for u in values),
+            usd=sum((u.usd for u in values), Decimal(0)),
+            known=all(selected) and all(u.known for u in values),
+        )

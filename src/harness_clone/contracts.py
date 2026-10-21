@@ -1,4 +1,5 @@
 """Versioned, strict records at component boundaries."""
+
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -6,7 +7,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MODEL = "accounts/fireworks/models/deepseek-v4p1-flash"
-COMPONENTS = ("system", "guardrails", "memory", "tools", "subagents", "skills", "scripts", "middleware")
+COMPONENTS = (
+    "system",
+    "guardrails",
+    "memory",
+    "tools",
+    "subagents",
+    "skills",
+    "scripts",
+    "middleware",
+)
 
 
 class Record(BaseModel):
@@ -52,7 +62,18 @@ class TaskSpec(Record):
 
 class HarnessManifest(Record):
     schema_version: Literal[1] = 1
-    components: list[Literal["system", "guardrails", "memory", "tools", "subagents", "skills", "scripts", "middleware"]] = list(COMPONENTS)
+    components: list[
+        Literal[
+            "system",
+            "guardrails",
+            "memory",
+            "tools",
+            "subagents",
+            "skills",
+            "scripts",
+            "middleware",
+        ]
+    ] = list(COMPONENTS)
     parent_digest: str | None = None
     digest: str | None = None
     provenance: dict[str, str] = Field(default_factory=dict)
@@ -65,7 +86,9 @@ class HarnessPatch(Record):
 
     @model_validator(mode="after")
     def disjoint(self):
-        if set(self.upserts) & set(self.deletions) or len(self.deletions) != len(set(self.deletions)):
+        if set(self.upserts) & set(self.deletions) or len(self.deletions) != len(
+            set(self.deletions)
+        ):
             raise ValueError("conflicting or duplicate patch paths")
         return self
 

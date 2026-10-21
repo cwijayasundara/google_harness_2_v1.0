@@ -5,7 +5,7 @@ from pydantic import Field
 
 
 class ScriptedModel(BaseChatModel):
-    replies: list[AIMessage] = Field(default_factory=lambda:[AIMessage(content="done")])
+    replies: list[AIMessage] = Field(default_factory=lambda: [AIMessage(content="done")])
     seen: list = Field(default_factory=list)
     bound: list = Field(default_factory=list)
     model_name: str = "accounts/fireworks/models/deepseek-v4p1-flash"
@@ -20,5 +20,5 @@ class ScriptedModel(BaseChatModel):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self.seen.append(messages)
-        reply=self.replies[min(len(self.seen)-1,len(self.replies)-1)]
+        reply = self.replies[min(len(self.seen) - 1, len(self.replies) - 1)]
         return ChatResult(generations=[ChatGeneration(message=reply)])

@@ -1,4 +1,5 @@
 """Explicit Fireworks construction; no implicit provider fallbacks."""
+
 import os
 from decimal import Decimal
 from functools import reduce
@@ -11,11 +12,21 @@ from .contracts import ExperimentConfig, Usage
 ROLES = {"executor", "INV", "DOM", "COMPOSE", "SELECT", "REFLECT", "subagent", "summarizer"}
 
 
-def make_model(config: ExperimentConfig, role: str, *, gateway_url: str | None = None, gateway_token: str | None = None) -> ChatFireworks:
+def make_model(
+    config: ExperimentConfig,
+    role: str,
+    *,
+    gateway_url: str | None = None,
+    gateway_token: str | None = None,
+) -> ChatFireworks:
     if role not in ROLES or config.harness_profile != "harness-clone-v1":
         raise ValueError("unknown role or harness profile")
     gateway = gateway_url or os.environ.get("HARNESS_GATEWAY_URL")
-    key = (gateway_token or os.environ.get("HARNESS_GATEWAY_TOKEN")) if gateway else os.environ.get("FIREWORKS_API_KEY")
+    key = (
+        (gateway_token or os.environ.get("HARNESS_GATEWAY_TOKEN"))
+        if gateway
+        else os.environ.get("FIREWORKS_API_KEY")
+    )
     if not key:
         raise ValueError("configure FIREWORKS_API_KEY or the harness inference gateway")
     return ChatFireworks(
@@ -26,7 +37,11 @@ def make_model(config: ExperimentConfig, role: str, *, gateway_url: str | None =
         max_tokens=config.max_output_tokens,
         timeout=config.timeout_seconds,
         max_retries=0,
-        profile={"max_input_tokens":config.max_context_tokens, "tool_calling":True, "structured_output":True},
+        profile={
+            "max_input_tokens": config.max_context_tokens,
+            "tool_calling": True,
+            "structured_output": True,
+        },
     )
 
 
@@ -40,7 +55,11 @@ def normalize_usage(response: AIMessage | dict) -> Usage:
     cached = int(details.get("cache_read", details.get("cached_tokens", 0)))
     if min(incoming, outgoing, cached) < 0 or cached > incoming:
         return Usage(known=False)
-    price = (Decimal(incoming-cached)*Decimal("0.30") + Decimal(cached)*Decimal("0.006") + Decimal(outgoing)*Decimal("1.20"))/Decimal(1000000)
+    price = (
+        Decimal(incoming - cached) * Decimal("0.30")
+        + Decimal(cached) * Decimal("0.006")
+        + Decimal(outgoing) * Decimal("1.20")
+    ) / Decimal(1000000)
     return Usage(input_tokens=incoming, cached_tokens=cached, output_tokens=outgoing, usd=price)
 
 
@@ -48,7 +67,7 @@ def assemble_stream(chunks) -> AIMessage:
     chunks = list(chunks)
     if not chunks:
         raise ValueError("empty provider stream")
-    return message_chunk_to_message(reduce(lambda a,b: a+b, chunks))
+    return message_chunk_to_message(reduce(lambda a, b: a + b, chunks))
 
 
 def retryable_status(status: int) -> bool:

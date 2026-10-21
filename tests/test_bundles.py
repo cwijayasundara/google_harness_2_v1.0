@@ -14,15 +14,27 @@ def bundle(tmp_path):
 
 def api():
     from harness_clone import bundles, contracts
+
     return bundles, contracts
 
 
 def test_bundle_covers_all_component_categories(bundle):
     b, c = api()
     m = b.validate_bundle(bundle)
-    assert set(m.components) == {"system", "guardrails", "memory", "tools", "subagents", "skills", "scripts", "middleware"}
+    assert set(m.components) == {
+        "system",
+        "guardrails",
+        "memory",
+        "tools",
+        "subagents",
+        "skills",
+        "scripts",
+        "middleware",
+    }
     digest = b.bundle_digest(bundle)
-    patch = c.HarnessPatch(parent_digest=digest, upserts={"system.md": "Changed instructions; use verify"})
+    patch = c.HarnessPatch(
+        parent_digest=digest, upserts={"system.md": "Changed instructions; use verify"}
+    )
     dest = bundle.parent / "next"
     assert b.apply_patch(bundle, patch, dest) != digest
     assert (bundle / "system.md").read_text() != "Changed instructions"
@@ -33,18 +45,25 @@ def test_bundle_covers_all_component_categories(bundle):
 def test_patch_rejects_unsafe_paths(bundle, path):
     b, c = api()
     with pytest.raises(ValueError):
-        b.apply_patch(bundle, c.HarnessPatch(parent_digest=b.bundle_digest(bundle), upserts={path: "bad"}), bundle.parent / "next")
+        b.apply_patch(
+            bundle,
+            c.HarnessPatch(parent_digest=b.bundle_digest(bundle), upserts={path: "bad"}),
+            bundle.parent / "next",
+        )
     assert not (bundle.parent / "next").exists()
 
 
-@pytest.mark.parametrize("path,content", [
-    ("skills/check/SKILL.md", "No frontmatter"),
-    ("scripts/check.py", "def invalid("),
-    ("subagents/check.json", '{"name":"check"}'),
-    ("config.json", '{"compaction_fraction":1.5}'),
-    ("config.json", '{"unknown_option":true}'),
-    ("system.md", "Run scripts/missing.py before finishing"),
-])
+@pytest.mark.parametrize(
+    "path,content",
+    [
+        ("skills/check/SKILL.md", "No frontmatter"),
+        ("scripts/check.py", "def invalid("),
+        ("subagents/check.json", '{"name":"check"}'),
+        ("config.json", '{"compaction_fraction":1.5}'),
+        ("config.json", '{"unknown_option":true}'),
+        ("system.md", "Run scripts/missing.py before finishing"),
+    ],
+)
 def test_invalid_components_rejected(bundle, path, content):
     b, _ = api()
     dest = bundle / path
@@ -67,7 +86,7 @@ def test_symlinks_and_parent_mismatch_rejected(bundle):
 def test_patch_conflicts_and_config_limits(bundle):
     b, c = api()
     with pytest.raises(ValueError):
-        c.HarnessPatch(parent_digest="0" * 64, upserts={"system.md":"x"}, deletions=["system.md"])
+        c.HarnessPatch(parent_digest="0" * 64, upserts={"system.md": "x"}, deletions=["system.md"])
     (bundle / "config.json").write_text(json.dumps({"context_tokens": 500000}))
     with pytest.raises(ValueError):
         b.validate_bundle(bundle, c.ExperimentConfig(max_context_tokens=100000))

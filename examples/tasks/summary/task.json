@@ -1,0 +1,1 @@
+{"id":"summary","domain":"numeric-summary","ordinal":0,"prompt":"Read values.json and produce answer.json with the numeric count and total.","source_root":"source","output_paths":["answer.json"]}

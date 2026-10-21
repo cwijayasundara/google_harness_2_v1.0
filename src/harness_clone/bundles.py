@@ -1,4 +1,5 @@
 """Validate and materialize content-addressed editable bundles without executing them."""
+
 import ast
 import hashlib
 import json
@@ -11,7 +12,9 @@ import yaml
 
 from .contracts import ExperimentConfig, HarnessConfig, HarnessManifest, HarnessPatch, SubagentSpec
 
-_PATTERN = re.compile(r"(?:memory/[\w.-]+\.md|tools/descriptions\.json|subagents/[\w-]+\.json|skills/[\w-]+/SKILL\.md|skills/[\w-]+/scripts/[\w.-]+\.py|scripts/[\w-]+\.py|middleware/[\w-]+\.py)\Z")
+_PATTERN = re.compile(
+    r"(?:memory/[\w.-]+\.md|tools/descriptions\.json|subagents/[\w-]+\.json|skills/[\w-]+/SKILL\.md|skills/[\w-]+/scripts/[\w.-]+\.py|scripts/[\w-]+\.py|middleware/[\w-]+\.py)\Z"
+)
 
 
 def safe_path(rel: str) -> str:
@@ -23,7 +26,9 @@ def safe_path(rel: str) -> str:
 
 def allowed_path(rel: str) -> bool:
     safe_path(rel)
-    return rel in {"manifest.json", "system.md", "guardrails.md", "config.json"} or bool(_PATTERN.fullmatch(rel))
+    return rel in {"manifest.json", "system.md", "guardrails.md", "config.json"} or bool(
+        _PATTERN.fullmatch(rel)
+    )
 
 
 def read_files(root: Path) -> dict[str, str]:
@@ -49,7 +54,10 @@ def validate_bundle(root: Path, config: ExperimentConfig | None = None) -> Harne
     except (KeyError, ValueError) as exc:
         raise ValueError(f"invalid bundle manifest/config: {exc}") from exc
     config = config or ExperimentConfig()
-    if tuning.context_tokens > config.max_context_tokens or tuning.delegation_depth > config.max_delegation_depth:
+    if (
+        tuning.context_tokens > config.max_context_tokens
+        or tuning.delegation_depth > config.max_delegation_depth
+    ):
         raise ValueError("harness configuration exceeds experiment limits")
     if not files.get("system.md", "").strip():
         raise ValueError("system prompt is required")
@@ -65,7 +73,9 @@ def validate_bundle(root: Path, config: ExperimentConfig | None = None) -> Harne
             SubagentSpec.model_validate_json(body)
         if rel == "tools/descriptions.json":
             data = json.loads(body)
-            if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in data.items()):
+            if not isinstance(data, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) and v for k, v in data.items()
+            ):
                 raise ValueError("tool descriptions must map names to nonempty strings")
         if rel.endswith("SKILL.md"):
             if not body.startswith("---\n") or "\n---" not in body[4:]:
@@ -88,7 +98,9 @@ def bundle_digest(root: Path) -> str:
     manifest = json.loads(files["manifest.json"])
     manifest.pop("digest", None)
     files["manifest.json"] = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
 
 
 def apply_patch(parent: Path, patch: HarnessPatch, destination: Path) -> str:

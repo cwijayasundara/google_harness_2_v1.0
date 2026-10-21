@@ -1,4 +1,5 @@
 """Local tasks with explicit sources and output contracts."""
+
 from pathlib import Path
 
 from .bundles import safe_path
@@ -22,4 +23,4 @@ def load_task(path: Path) -> TaskSpec:
     root = task.source_root
     if not root.is_absolute():
         root = (path.parent / root).resolve()
-    return validate_task(task.model_copy(update={"source_root":root}))
+    return validate_task(task.model_copy(update={"source_root": root}))
