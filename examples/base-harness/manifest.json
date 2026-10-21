@@ -1,0 +1,1 @@
+{"schema_version":1,"components":["system","guardrails","memory","tools","subagents","skills","scripts","middleware"]}

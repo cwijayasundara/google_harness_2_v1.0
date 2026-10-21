@@ -1,0 +1,1 @@
+{"name":"reviewer","description":"Review a deliverable against its task contract","system_prompt":"Check the requested structure and evidence. Return specific discrepancies."}
