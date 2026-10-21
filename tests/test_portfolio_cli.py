@@ -249,3 +249,129 @@ def test_portfolio_fetch_warns_on_partial_universe(tmp_path, monkeypatch, capsys
     assert report["universe_missing"]["count"] == 2
     assert any("2 of 6" in w for w in report["warnings"])
     assert "2 of 6" in captured.err
+
+
+def _score_run(tmp_path, recs, coin_ids):
+    from harness_clone.contracts import ExecutionRecord, SelectionRecord, TaskResult
+    from harness_clone.storage import RunStore
+
+    source = tmp_path / "snap" / "source"
+    source.mkdir(parents=True)
+    if coin_ids is not None:
+        (source / "coin_ids.json").write_text(json.dumps(coin_ids))
+    run_dir = tmp_path / "run"
+    store = RunStore(run_dir)
+    tid = "portfolio-20261014"
+    ex = ExecutionRecord(
+        execution_id="e1",
+        task_id=tid,
+        bundle_digest="a" * 64,
+        delivered=True,
+        artifacts={"recommendations.json": json.dumps(recs)},
+    )
+    result = TaskResult(
+        task_id=tid, executions={"e1": ex}, selection=SelectionRecord(chosen_execution_id="e1")
+    )
+    store.put("runtime", "results", [result.model_dump(mode="json")])
+    store.put(
+        "runtime",
+        "tasks",
+        [{"id": tid, "ordinal": 20261014, "source_root": str(source)}],
+    )
+    return run_dir
+
+
+def _crypto_rec(ticker, **over):
+    rec = {
+        "ticker": ticker,
+        "asset_class": "crypto",
+        "action": "add",
+        "target_weight_pct": 5.0,
+        "horizon_days": 7,
+        "thesis": "t",
+        "invalidation": "i",
+        "benchmark": "BTC",
+        "evidence_refs": ["e"],
+    }
+    rec.update(over)
+    return rec
+
+
+def _coingecko_provider(requested):
+    from datetime import datetime, timezone
+
+    from harness_clone.portfolio_market import CoinGeckoProvider
+    from harness_clone.portfolio_ops import RoutedPriceProvider
+
+    class NoEquity:
+        def closes(self, *a):
+            raise AssertionError("equity not expected")
+
+        dated_closes = closes
+
+    def get(url, params):
+        coin_id = url.split("/coins/")[1].split("/")[0]
+        requested.append(coin_id)
+        if coin_id not in {"hyperliquid", "bitcoin"}:
+            raise RuntimeError(f"404 for {coin_id}")
+        scale = 2.0 if coin_id == "hyperliquid" else 1.0
+        return {
+            "prices": [
+                [
+                    int(datetime(2026, 10, d, tzinfo=timezone.utc).timestamp() * 1000),
+                    scale * (100.0 + (d - 13)),
+                ]
+                for d in range(13, 22)
+            ]
+        }
+
+    return RoutedPriceProvider(NoEquity(), CoinGeckoProvider(get=get))
+
+
+def test_portfolio_score_prices_top100_coin_via_persisted_id(tmp_path, monkeypatch):
+    import harness_clone.cli as cli
+
+    requested: list[str] = []
+    run_dir = _score_run(
+        tmp_path, [_crypto_rec("HYPE")], {"HYPE": "hyperliquid", "BTC": "bitcoin"}
+    )
+    monkeypatch.setattr(cli, "live_price_provider", lambda: _coingecko_provider(requested))
+    out = tmp_path / "sb.json"
+    argv = ["portfolio", "score", "--run-dir", str(run_dir), "--scoreboard", str(out)]
+    assert cli.main([*argv, "--date", "2026-10-28"]) == 0
+    report = json.loads(out.read_text())
+    assert report["matured"] == 1 and report["unscored"] == 0
+    assert "hype" not in requested
+    assert "hyperliquid" in requested
+
+
+def test_portfolio_score_unknown_crypto_id_is_unscored_not_fatal(tmp_path, monkeypatch):
+    import harness_clone.cli as cli
+
+    requested: list[str] = []
+    run_dir = _score_run(
+        tmp_path, [_crypto_rec("ZZZ"), _crypto_rec("HYPE")], {"HYPE": "hyperliquid"}
+    )
+    monkeypatch.setattr(cli, "live_price_provider", lambda: _coingecko_provider(requested))
+    out = tmp_path / "sb.json"
+    argv = ["portfolio", "score", "--run-dir", str(run_dir), "--scoreboard", str(out)]
+    assert cli.main([*argv, "--date", "2026-10-28"]) == 0
+    report = json.loads(out.read_text())
+    assert report["matured"] == 1 and report["unscored"] == 1
+    zzz = next(c for c in report["calls"] if c["ticker"] == "ZZZ")
+    assert zzz["status"] == "unscored" and "ZZZ" in zzz["reason"]
+    assert "zzz" not in requested
+
+
+def test_portfolio_score_pricing_error_is_unscored_not_fatal(tmp_path, monkeypatch):
+    import harness_clone.cli as cli
+
+    requested: list[str] = []
+    run_dir = _score_run(tmp_path, [_crypto_rec("HYPE")], {"HYPE": "nonexistent-id"})
+    monkeypatch.setattr(cli, "live_price_provider", lambda: _coingecko_provider(requested))
+    out = tmp_path / "sb.json"
+    argv = ["portfolio", "score", "--run-dir", str(run_dir), "--scoreboard", str(out)]
+    assert cli.main([*argv, "--date", "2026-10-28"]) == 0
+    report = json.loads(out.read_text())
+    assert report["unscored"] == 1 and report["matured"] == 0
+    assert "404" in report["calls"][0]["reason"]

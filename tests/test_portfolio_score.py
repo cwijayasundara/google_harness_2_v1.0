@@ -304,3 +304,15 @@ def test_window_prices_use_close_on_or_before_task_date_and_maturity():
     assert window_prices([], date(2026, 10, 18), date(2026, 10, 25)) is None
     # No close strictly inside the window after the start close: unscored.
     assert window_prices(series, date(2026, 10, 17), date(2026, 10, 18)) is None
+
+
+def test_pricing_error_makes_call_unscored_with_reason():
+    from harness_clone.portfolio_score import score_call
+
+    def failing_prices(ticker, asset_class, start, end):
+        raise RuntimeError("404 not found")
+
+    s = score_call(rec(), date(2026, 10, 14), date(2026, 10, 21), failing_prices, 0.2)
+    assert s.status == "unscored"
+    assert s.excess_return_pct is None
+    assert "404 not found" in (s.reason or "")

@@ -253,18 +253,33 @@ def _portfolio_score(args, run_dir: Path, day: date) -> dict:
         except (ValueError, KeyError, TypeError):
             continue
     provider = live_price_provider()
-    volatilities = {
-        ticker: market_summary(
-            ticker,
-            ticker_classes.get(ticker, benchmarks.get(ticker, "equity")),
-            provider.closes(
-                ticker, ticker_classes.get(ticker, benchmarks.get(ticker, "equity")), day, 365
-            ),
-        ).volatility_30d
-        for ticker in sorted(tickers)
-    }
+    # Register the snapshot-time ticker -> CoinGecko id maps before any pricing.
+    for task in store.get("runtime", "tasks") or []:
+        try:
+            ids = json.loads((Path(task["source_root"]) / "coin_ids.json").read_text())
+            provider.add_coin_ids({str(k): str(v) for k, v in ids.items()})
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+
+    def check_priceable(ticker: str, asset_class: str) -> None:
+        # No ticker.lower() guess for crypto: an unknown id is unscored.
+        has = getattr(provider, "has_coin_id", None)
+        if asset_class.lower() == "crypto" and has is not None and not has(ticker):
+            raise ValueError(f"no known CoinGecko id for crypto ticker {ticker}")
+
+    volatilities: dict[str, float] = {}
+    for ticker in sorted(tickers):
+        asset_class = ticker_classes.get(ticker, benchmarks.get(ticker, "equity"))
+        try:
+            check_priceable(ticker, asset_class)
+            volatilities[ticker] = market_summary(
+                ticker, asset_class, provider.closes(ticker, asset_class, day, 365)
+            ).volatility_30d
+        except Exception:  # noqa: BLE001 - its calls become unscored, not fatal
+            continue
 
     def prices(ticker: str, asset_class: str, start: date, end: date):
+        check_priceable(ticker, asset_class)
         days = max((end - start).days, 0) + PRICE_LOOKBACK_DAYS
         return window_prices(provider.dated_closes(ticker, asset_class, end, days), start, end)
 

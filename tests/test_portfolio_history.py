@@ -194,3 +194,9 @@ def test_history_drops_and_reports_holdings_without_a_price_that_day(tmp_path):
     assert portfolio["missing_positions"] == ["BTC"]
     assert portfolio["positions"][0]["portfolio_weight"] == pytest.approx(0.8)
     assert "99999" not in json.dumps(portfolio) and "999.0" not in json.dumps(portfolio)
+
+
+def test_history_persists_coin_ids_for_crypto_tickers(tmp_path, fake_provider):
+    build_history(tmp_path, [date(2026, 9, 1)], ["AAPL", "BTC"], fake_provider, proxy())
+    ids = json.loads((tmp_path / "2026-09-01" / "source" / "coin_ids.json").read_text())
+    assert ids == {"BTC": "bitcoin"}

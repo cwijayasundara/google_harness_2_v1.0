@@ -497,3 +497,26 @@ def test_ensure_adopted_refuses_tampered_or_missing_archive(tmp_path, store):
     shutil.rmtree(archive)
     with pytest.raises(ValueError, match="not archived"):
         ensure_adopted(RunStore(tmp_path / "b"), base_dir, bundle_root)
+
+
+def test_fetch_task_persists_coin_ids_for_scoring(tmp_path):
+    from harness_clone.portfolio_ops import fetch_task
+
+    def crypto_get(url, params):
+        return [
+            {"id": "bitcoin", "symbol": "btc"},
+            {"id": "hyperliquid", "symbol": "hype"},
+        ]
+
+    fetch_task(
+        tmp_path / "snapshots",
+        DAY,
+        fake_portfolio(),
+        FakeProvider(),
+        sp500_fetch=_fake_sp500_fetch,
+        crypto_get=crypto_get,
+    )
+    source = tmp_path / "snapshots" / "2026-10-21" / "source"
+    ids = json.loads((source / "coin_ids.json").read_text())
+    assert ids["HYPE"] == "hyperliquid"
+    assert ids["BTC"] == "bitcoin"

@@ -93,6 +93,11 @@ def build_history(
     """
     holdings = [position.ticker for position in proxy_portfolio.positions]
     unique_tickers = list(dict.fromkeys([*tickers, *holdings]))
+    coin_ids = {
+        t.upper(): COIN_IDS[t.upper()]
+        for t in unique_tickers
+        if _asset_class(t, proxy_portfolio) == "crypto" and t.upper() in COIN_IDS
+    }
     tasks: list[TaskSpec] = []
     for day in days:
         summaries = {}
@@ -126,6 +131,7 @@ def build_history(
                     "sample": no_data[:10],
                     "sources_unavailable": [],
                 },
+                coin_ids=coin_ids,
             )
         )
     return tasks

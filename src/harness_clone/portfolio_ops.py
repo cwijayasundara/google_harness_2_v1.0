@@ -17,6 +17,7 @@ from .contracts import ExecutionRecord, ExperimentConfig, PortfolioSnapshot, Tas
 from .experience import run_stream
 from .portfolio_artifacts import validate_recommendations
 from .portfolio_market import (
+    COIN_IDS,
     PriceProvider,
     market_summary,
     screen_candidates,
@@ -69,6 +70,10 @@ class RoutedPriceProvider:
     def add_coin_ids(self, coin_ids: dict[str, str]) -> None:
         if hasattr(self._crypto, "add_coin_ids"):
             self._crypto.add_coin_ids(coin_ids)
+
+    def has_coin_id(self, ticker: str) -> bool:
+        has = getattr(self._crypto, "has_coin_id", None)
+        return True if has is None else bool(has(ticker))
 
 
 def live_price_provider() -> RoutedPriceProvider:
@@ -202,6 +207,12 @@ def fetch_task(
         crypto_pairs, sources_unavailable = [], [*sources_unavailable, "crypto_top100"]
     if crypto_pairs and hasattr(provider, "add_coin_ids"):
         provider.add_coin_ids(dict(crypto_pairs))
+    # Persisted for the scorer; the curated map wins, as it does on the provider.
+    coin_ids = {symbol.upper(): coin_id for symbol, coin_id in crypto_pairs}
+    for ticker, asset_class in wanted.items():
+        if asset_class == "crypto" and ticker.upper() in COIN_IDS:
+            coin_ids.setdefault(ticker.upper(), COIN_IDS[ticker.upper()])
+    coin_ids = {s: COIN_IDS.get(s, cid) for s, cid in coin_ids.items()}
     universe: list[tuple[str, str]] = [(t, "equity") for t in equity_tickers]
     universe += [(symbol, "crypto") for symbol, _ in crypto_pairs]
     universe_summaries = []
@@ -235,6 +246,7 @@ def fetch_task(
         len(universe),
         prior_outcomes,
         universe_missing=universe_missing,
+        coin_ids=coin_ids,
     )
 
 

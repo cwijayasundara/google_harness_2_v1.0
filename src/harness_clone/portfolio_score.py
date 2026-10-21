@@ -48,6 +48,7 @@ class ScoredCall(Record):
     excess_return_pct: float | None = None
     risk_adjusted: float | None = None
     status: Literal["matured", "pending", "unscored"]
+    reason: str | None = None
 
 
 def _cost_pct(rec: Recommendation) -> float:
@@ -73,9 +74,14 @@ def score_call(
     }
     if today < maturity_date:
         return ScoredCall(**base, status="pending")
-    ticker_prices = prices(rec.ticker, rec.asset_class, task_date, maturity_date)
     benchmark_class = "crypto" if rec.benchmark.upper() in {"BTC", "ETH"} else "equity"
-    bench_prices = prices(rec.benchmark, benchmark_class, task_date, maturity_date)
+    try:
+        ticker_prices = prices(rec.ticker, rec.asset_class, task_date, maturity_date)
+        bench_prices = prices(rec.benchmark, benchmark_class, task_date, maturity_date)
+    except Exception as exc:  # noqa: BLE001 - one unpriceable call never aborts a run
+        return ScoredCall(
+            **base, status="unscored", reason=f"pricing failed: {type(exc).__name__}: {exc}"[:300]
+        )
     if (
         ticker_prices is None
         or bench_prices is None

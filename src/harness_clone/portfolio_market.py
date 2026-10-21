@@ -237,6 +237,9 @@ class CoinGeckoProvider:
     def closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[float]:
         return [value for _, value in self.dated_closes(ticker, asset_class, end, days)]
 
+    def has_coin_id(self, ticker: str) -> bool:
+        return ticker.upper() in self._coin_ids
+
     def dated_closes(self, ticker: str, asset_class: str, end: date, days: int) -> list[DatedClose]:
         coin_id = self._coin_ids.get(ticker.upper(), ticker.lower())
         to_ts = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp())

@@ -64,6 +64,7 @@ def build_snapshot_task(
     proxy: bool = False,
     portfolio_extra: dict | None = None,
     universe_missing: dict | None = None,
+    coin_ids: dict[str, str] | None = None,
 ) -> TaskSpec:
     dated_dir = Path(base) / day.isoformat()
     if dated_dir.exists() or dated_dir.is_symlink():
@@ -105,6 +106,12 @@ def build_snapshot_task(
         ).encode(),
         "source/prior_outcomes.json": json.dumps(prior_outcomes, indent=2).encode(),
     }
+    if coin_ids is not None:
+        # Host-side ticker -> CoinGecko id map so the scorer prices the same
+        # coin the snapshot saw (never a ticker.lower() guess).
+        payloads["source/coin_ids.json"] = json.dumps(
+            dict(sorted(coin_ids.items())), indent=2
+        ).encode()
 
     total = 0
     for rel, data in payloads.items():
