@@ -102,6 +102,51 @@ def test_gateway_rejects_unmetered_generation_overrides(tmp_path):
         )
 
 
+def test_gateway_accepts_prompt_cache_key(tmp_path):
+    from decimal import Decimal
+    from harness_clone.gateway import InferenceGateway
+    from harness_clone.storage import BudgetLedger
+
+    gateway = InferenceGateway(
+        ExperimentConfig(max_usd="1"), BudgetLedger(tmp_path / "b.sqlite", Decimal("1")), "token"
+    )
+    _, payload = gateway.prepare(
+        {
+            "model": ExperimentConfig().model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100,
+            "n": 1,
+            "prompt_cache_key": "abc123",
+            "stop": ["\n"],
+            "stream": False,
+            "temperature": 0,
+            "tools": [],
+        },
+        token="token",
+    )
+    assert payload["prompt_cache_key"] == "abc123"
+
+
+def test_gateway_rejects_invalid_prompt_cache_key(tmp_path):
+    from decimal import Decimal
+    from harness_clone.gateway import InferenceGateway
+    from harness_clone.storage import BudgetLedger
+
+    gateway = InferenceGateway(
+        ExperimentConfig(max_usd="1"), BudgetLedger(tmp_path / "b.sqlite", Decimal("1")), "token"
+    )
+    for bad_key in [123, ["abc"], "x" * 257]:
+        with pytest.raises(ValueError, match="invalid prompt cache key"):
+            gateway.prepare(
+                {
+                    "model": ExperimentConfig().model,
+                    "messages": [],
+                    "prompt_cache_key": bad_key,
+                },
+                token="token",
+            )
+
+
 @pytest.mark.docker
 def test_portfolio_math_executes_in_container():
     import os

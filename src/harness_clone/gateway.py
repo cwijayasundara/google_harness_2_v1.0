@@ -55,9 +55,15 @@ class InferenceGateway:
             "user",
             "n",
             "reasoning_effort",
+            "prompt_cache_key",
         }
         if set(payload) - allowed:
             raise ValueError("unsupported unmetered request options")
+        if "prompt_cache_key" in payload and not (
+            isinstance(payload["prompt_cache_key"], str)
+            and 1 <= len(payload["prompt_cache_key"]) <= 256
+        ):
+            raise ValueError("invalid prompt cache key")
         if len(json.dumps(payload).encode()) > 2_000_000:
             raise ValueError("request too large")
         payload = dict(payload)
