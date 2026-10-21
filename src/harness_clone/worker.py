@@ -13,7 +13,7 @@ def main():
     request=json.loads(Path("/control/request.json").read_text())
     config=ExperimentConfig.model_validate(request["config"])
     task=TaskSpec.model_validate(request["task"])
-    backend=LocalShellBackend(root_dir="/",virtual_mode=False,env={"PATH":"/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"},timeout=config.timeout_seconds)
+    backend=LocalShellBackend(root_dir="/workspace",virtual_mode=False,env={"PATH":"/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"},timeout=config.timeout_seconds)
     agent=compile_agent(Path("/bundle"),backend,config)
     result=agent.invoke({"messages":[{"role":"user","content":task.prompt+"\nRead sources in /source/. Write exactly these outputs under /output/: "+", ".join(task.output_paths)}]},config={"configurable":{"thread_id":request["execution_id"]},"recursion_limit":config.max_tool_calls*3+10})
     trace=[]
