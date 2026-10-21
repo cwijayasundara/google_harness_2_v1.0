@@ -1,0 +1,11 @@
+.worktrees/
+.superpowers/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.env
+runs/
+node_modules/
+dist/
+*.egg-info/
