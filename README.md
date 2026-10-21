@@ -6,11 +6,11 @@ The optimizer versions system prompts, guardrails, memory, tool guidance, subage
 
 ## Status
 
-The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution is verified by the explicitly enabled Docker tests (read-only/non-root/no-public-egress isolation and a real Deep Agents graph executing a candidate script in a container). Live Fireworks/Pi compatibility over the real provider is **not yet verified**; no paid model calls have been performed. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
+The deterministic workflow, real Deep Agents compilation, persistence, causal experience, Python Pi client, and Pi Durable SQLite reopen behavior are tested locally. Docker execution is verified by the explicitly enabled Docker tests (read-only/non-root/no-public-egress isolation and a real Deep Agents graph executing a candidate script in a container). Live Fireworks preflight (tool round trip, streaming, structured output, usage metadata) passes against the real provider. A complete live experiment run is **not yet verified**: the baseline container execution currently fails with a gateway rejection before budget reservation, and complete Pi code-edit behavior over the real provider is also unverified. The demo uses scripted editors and deterministic Python computations; it demonstrates scheduling and storage, not model quality improvement.
 
 ## Install and try the offline demo
 
-Use Python 3.12, uv, Node >=22.19.0, and Docker for live workers. Run from this repository's implementation worktree:
+Use Python 3.12, uv, Node >=22.19.0, and Docker for live workers. Run from the repository root:
 
 ```bash
 uv sync --frozen
@@ -38,7 +38,7 @@ Set `FIREWORKS_API_KEY` in the **host environment**. The application does not lo
 Paid calls require an explicit nonzero cap. The following commands are examples; choose your own budget before running them:
 
 ```bash
-uv run harness-clone doctor --live --max-usd 1
+uv run harness-clone doctor --live --max-usd 2
 uv run harness-clone run \
   --task examples/tasks/summary/task.json \
   --base-harness examples/base-harness \
@@ -110,6 +110,89 @@ HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q
 
 Docker tests are explicitly skipped without `HARNESS_TEST_DOCKER=1`; a skipped test is not a verified container boundary. Pi's Node SQLite adapter currently emits Node's experimental SQLite warning.
 
+## Why Docker is required for live testing
+
+Candidate harnesses are model-written and executable: they contain Python scripts and middleware, and the executing agent has shell tools. Running that code directly on the host would give untrusted generated code access to your files, network, and the host's `FIREWORKS_API_KEY`. Filesystem middleware alone cannot contain a process that can spawn a shell, so Docker is the isolation boundary, not an optional packaging step:
+
+- Execution containers run as a non-root user with all capabilities dropped, a read-only bundle/source mount, and private writable output/scratch only.
+- Workers sit on an internal Docker network with no public egress; they can only reach the inference gateway.
+- The account API key exists only in the trusted gateway container. Workers and Pi editors receive a scoped gateway token, so generated code never sees the credential.
+- The gateway is also the metering point: every provider call is reserved and settled in the shared budget ledger before untrusted code can spend.
+- Images pin the runtime (Python, Deep Agents, Pi) so runs are reproducible; the CLI records the executor and Pi image IDs at admission and refuses to resume a run against rebuilt images.
+
+The offline test suite, deterministic demos, and `doctor` without `--live` do not need Docker and make no paid calls. Docker is only needed for the isolation tests (`HARNESS_TEST_DOCKER=1`) and for any live `run`.
+
+## Manual test checklist
+
+Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Fireworks calls and need a spending cap you choose.
+
+1. **Set up and run the offline suite** (no Docker, no network, no key needed):
+
+   ```bash
+   uv sync --frozen
+   npm ci --prefix workers/pi
+   uv run ruff check .
+   uv run pytest -q            # expect 99 passed, 2 skipped
+   npm test --prefix workers/pi
+   npm run build --prefix workers/pi
+   ```
+
+2. **Run the deterministic demo** (scripted editor/executor; verifies scheduling, storage, and resume without a model):
+
+   ```bash
+   uv run harness-clone demo --run-dir runs/demo-parallel --mode parallel --k 2
+   uv run harness-clone inspect --run-dir runs/demo-parallel
+   uv run harness-clone resume --run-dir runs/demo-parallel   # replays nothing; counts stay 16 executions / 12 stages
+   ```
+
+3. **Build the container images** (needed for steps 4 and 6). Rebuild after any source change; live runs pin image IDs, so a rebuilt image requires a fresh run directory:
+
+   ```bash
+   docker compose -f containers/compose.yaml --profile build build
+   ```
+
+4. **Verify the isolation boundary** (Docker required, still no paid calls):
+
+   ```bash
+   HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q   # expect 2 passed
+   ```
+
+5. **Live preflight** — real Fireworks calls for tool use, streaming, and structured output; typically costs well under $0.01:
+
+   ```bash
+   export FIREWORKS_API_KEY=...   # host environment only; never commit it
+   uv run harness-clone doctor --live --max-usd 2
+   ```
+
+   Expect `"status": "live-pass"` with `tool_call`, `tool_roundtrip`, `usage`, `stream`, and `structured` all true. Note `executor_compaction` stays `unverified` by design.
+
+6. **Live experiment** — a full Propose–Probe–Compose run on the example task (Docker plus paid calls). Start with the text editor; try `--editor-policy pi` afterwards for the Pi Durable path:
+
+   ```bash
+   uv run harness-clone run \
+     --task examples/tasks/summary/task.json \
+     --base-harness examples/base-harness \
+     --run-dir runs/live-summary \
+     --mode parallel --k 1 --profile research \
+     --editor-policy text --max-usd 2
+   uv run harness-clone inspect --run-dir runs/live-summary   # includes recorded budget spend
+   ```
+
+   Known issue: this currently fails at the baseline execution with a gateway rejection before budget reservation, while step 5 passes. Treat a successful `run` here as the live-verification milestone; it has not been reached yet.
+
+7. **Score the result offline** (scores never feed back into refinement). For the summary task the expected artifact is the count and total of `examples/tasks/summary/source/values.json`:
+
+   ```bash
+   cat > /tmp/expectations.json <<'EOF'
+   {"summary": {"answer.json": {"count": 3, "total": 10}}}
+   EOF
+   uv run harness-clone evaluate --run-dir runs/live-summary \
+     --expectations /tmp/expectations.json \
+     --output /tmp/live-results.json
+   ```
+
+   Also try `uv run harness-clone resume --run-dir runs/live-summary`: a compatible resume replays no paid work. Changing the task, sources, configuration, or container images must be rejected and requires a new run directory — that rejection leaving the original run resumable is part of the expected behavior.
+
 | Requirement | Implementation / evidence |
 |---|---|
 | All eight component categories | Bundle validator, compiler, component versioning tests |
@@ -117,7 +200,7 @@ Docker tests are explicitly skipped without `HARNESS_TEST_DOCKER=1`; a skipped t
 | Both refinement schedules | Controller count, ancestry, selection, and fallback tests |
 | Cross-task experience | Domain/ordinal namespace and two-task stream tests |
 | Resume | Interrupted probe replay and immutable publication tests |
-| Exact Fireworks model | Provider role-routing and usage tests; live compatibility pending |
+| Exact Fireworks model | Provider role-routing and usage tests; live preflight passed, full live run pending |
 | Pi Durable | SQLite job identity/reopen tests and TypeScript build; container/live integration pending |
 | Credentials and budget | Gateway policy and transactional concurrent reservation tests; real isolation pending |
 | Evaluation separation | External output and evidence allowlist tests |
