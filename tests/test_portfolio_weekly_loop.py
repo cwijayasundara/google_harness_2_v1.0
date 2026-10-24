@@ -25,6 +25,9 @@ WEEK2 = [date(2026, 10, 19) + timedelta(days=i) for i in range(5)]
 
 @pytest.fixture
 def loop(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(cli, "portfolio_bundle", lambda: Path(__file__).parent / "fixtures/portfolio-harness")
     base = tmp_path / "portfolio"
     summaries = {"AAPL": _summary("AAPL", "equity", 120.0), "SPY": _summary("SPY", "etf", 500.0)}
     candidates = [Candidate(ticker="MSFT", asset_class="equity", score=9.5, metrics={})]

@@ -142,7 +142,7 @@ def run_three_day_evolution(tmp_path):
     reflected lessons were visible in evidence while that task was processed.
     """
     store = RunStore(tmp_path / "run")
-    base_digest = store.publish_bundle(REPO / "examples" / "portfolio-harness")
+    base_digest = store.publish_bundle(REPO / "tests" / "fixtures" / "portfolio-harness")
     summaries = {"AAPL": _summary("AAPL", "equity", 120.0), "SPY": _summary("SPY", "etf", 500.0)}
     candidates = [Candidate(ticker="MSFT", asset_class="equity", score=9.5, metrics={})]
     tasks = [

@@ -157,6 +157,9 @@ def run_task(
         for i in range(1, config.k + 1):
             roll(f"base{i}", base_digest)
         if not any(r.delivered for r in result.executions.values()):
+            if ledger is not None:
+                for label in planned:
+                    release(label)
             raise RuntimeError("no baseline execution delivered; inspect execution errors")
         return {}
 
@@ -214,7 +217,12 @@ def run_task(
             if len(records) == 1:
                 chosen, reason = records[0].execution_id, "only eligible deliverable"
             else:
-                chosen, reason = editor.choose(task, records)
+                if hasattr(editor, "set_stage"):
+                    editor.set_stage(f"{prefix}/select", 0, "", [])
+                try:
+                    chosen, reason = editor.choose(task, records)
+                finally:
+                    release("select")
             if chosen not in {r.execution_id for r in records}:
                 raise ValueError("selector returned an ineligible output")
             result.selection = SelectionRecord(

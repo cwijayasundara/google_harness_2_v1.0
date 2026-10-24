@@ -78,8 +78,9 @@ def worker_command(
 
 
 class DockerExecutor:
-    def __init__(self, store: RunStore, config: ExperimentConfig):
+    def __init__(self, store: RunStore, config: ExperimentConfig, artifact_validator=None):
         self.store, self.config = store, config
+        self.artifact_validator = artifact_validator
 
     def execute(self, task: TaskSpec, bundle_digest: str, execution_id: str) -> ExecutionRecord:
         validate_task(task)
@@ -117,6 +118,12 @@ class DockerExecutor:
                     record.artifacts, record.delivered, record.error = collect_artifacts(
                         work / "output", task
                     )
+                    if record.delivered and self.artifact_validator:
+                        try:
+                            self.artifact_validator(task, record.artifacts)
+                        except (ValueError, KeyError, TypeError) as exc:
+                            record.delivered = False
+                            record.error = f"artifact-contract: {str(exc)[:300]}"
         except subprocess.TimeoutExpired:
             record.status, record.error = "failed", "timeout"
         except Exception as exc:

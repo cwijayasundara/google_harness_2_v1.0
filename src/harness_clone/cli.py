@@ -106,10 +106,14 @@ def live_components(config, store):
 
 
 def portfolio_bundle() -> Path:
-    source = Path(__file__).resolve().parents[2] / "examples/portfolio-harness"
-    if source.exists():
-        return source
-    return Path(__file__).parent / "examples/portfolio-harness"
+    raise ValueError("portfolio example retired; use orderops for new experiments. "
+                     "Existing archived portfolio bundles remain usable.")
+
+
+def _ensure_portfolio_adopted(store, base_dir):
+    # Avoid resolving a removed seed bundle when an archived adoption exists.
+    return ensure_adopted(store, base_dir,
+                          Path(".") if read_adopted(base_dir) else portfolio_bundle())
 
 
 def _admit_live(max_usd: str) -> Decimal:
@@ -324,7 +328,7 @@ def run_portfolio(args) -> dict:
         # One run directory per date: a changed snapshot or image never
         # collides with an earlier day, and --max-usd caps this run only.
         store = RunStore(args.run_dir or (base_dir / "runs" / f"daily-{day.isoformat()}"))
-        digest = ensure_adopted(store, base_dir, portfolio_bundle())
+        digest = _ensure_portfolio_adopted(store, base_dir)
         config = _pinned_config(cap)
         task = _fetch_or_load_task(args, base_dir, day)
         executor, _factory = live_components(config, store)
@@ -349,7 +353,7 @@ def run_portfolio(args) -> dict:
         digest = started["base"]
         import_bundle(store, base_dir, digest)
     else:
-        digest = ensure_adopted(store, base_dir, portfolio_bundle())
+        digest = _ensure_portfolio_adopted(store, base_dir)
     config = _pinned_config(cap, mode="sequential", k=1)
     tasks = _week_tasks(base_dir, day)
     store.put("runtime", "kind", {"backend": "deepagents-fireworks"})
@@ -398,7 +402,10 @@ def parser():
         if name == "evaluate":
             cmd.add_argument("--expectations", type=Path, required=True)
             cmd.add_argument("--output", type=Path, required=True)
-    portfolio = commands.add_parser("portfolio")
+    from .orderops.cli import add_parser
+
+    add_parser(commands)
+    portfolio = commands.add_parser("portfolio", help="Legacy portfolio commands (seed retired)")
     portfolio_commands = portfolio.add_subparsers(dest="portfolio_command", required=True)
     for name in ["fetch", "daily", "evolve", "score"]:
         cmd = portfolio_commands.add_parser(name)
@@ -458,6 +465,10 @@ def main(argv=None):
             results = run_stream(tasks, config, store, executor, factory, base)
             store.put("runtime", "results", [r.model_dump(mode="json") for r in results])
             report = summarize(results, "deepagents-fireworks")
+        elif args.command == "orderops":
+            from .orderops.cli import dispatch
+
+            report = dispatch(args)
         elif args.command == "portfolio":
             report = run_portfolio(args)
         else:

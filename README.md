@@ -23,7 +23,7 @@ npm ci --prefix workers/pi
 
 ```bash
 uv run ruff check .
-uv run pytest -q                       # expect 261 passed, 3 skipped
+uv run pytest -q                       # expect 304 passed, 4 skipped
 uv run harness-clone doctor            # offline environment report
 uv run harness-clone demo --run-dir runs/demo-parallel --mode parallel --k 2
 uv run harness-clone inspect --run-dir runs/demo-parallel
@@ -33,7 +33,7 @@ uv run harness-clone inspect --run-dir runs/demo-parallel
 
 ```bash
 docker compose -f containers/compose.yaml --profile build build
-HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 3 passed
+HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 4 passed
 ```
 
 **4. Set credentials in your shell** (host environment only; the app never reads `.env`):
@@ -68,26 +68,16 @@ uv run harness-clone evaluate --run-dir runs/live-summary \
 
 Use `--task` more than once for a multi-task stream, `--k` to widen the search, `--mode sequential` to carry each composed harness forward, and `--editor-policy pi` (the default) to let Pi Durable make code-bearing edits. Re-running the same command resumes; `uv run harness-clone resume --run-dir runs/live-summary` replays nothing that already finished.
 
-**7. Run the portfolio agent** (recommendations only; see [Portfolio agent](#portfolio-agent-recommendations-only) for the full layout and safety notes). With no eToro key, start from a CSV export using this exact header. A row with `asset_class` `cash` is your cash balance (`units × current_price`):
-
-```csv
-instrument,ticker,asset_class,units,open_rate,current_price
-Apple Inc,AAPL,equity,10,150.00,190.00
-Bitcoin,BTC,crypto,0.05,40000,65000
-Cash,CASH,cash,500,1,1
-```
+**7. Test self-evolution with OrderOps** (see the full workflow below):
 
 ```bash
-# Each trading day: freeze today's snapshot (free), then run the adopted bundle once (paid)
-uv run harness-clone portfolio fetch --csv ~/portfolio.csv          # or omit --csv to use your eToro keys
-uv run harness-clone portfolio daily --max-usd 2                    # writes runs/portfolio/<date>/report.md and recommendations.json
-
-# Once a week, after the week's dailies: evolve the bundle (paid), then score matured calls (free)
-uv run harness-clone portfolio evolve --max-usd 5
-uv run harness-clone portfolio score --scoreboard ~/portfolio-scoreboard.json
+uv run harness-clone orderops generate \
+  --tasks-dir runs/orderops/tasks --private-dir runs/orderops/private
 ```
 
-All portfolio commands default to `--base-dir runs/portfolio` and today's date; pass `--date YYYY-MM-DD` to act on another day (for `evolve`, that day's ISO week). `daily` fetches the snapshot itself if `fetch` has not run yet. Pass `--scoreboard` to `fetch`/`daily` to feed matured outcomes from an earlier scoreboard into the new snapshot. Keep the scoreboard file outside `runs/portfolio`; `score` refuses to write it inside the run directory it reads. Run `evolve` once per week, at week end. Running it again in the same week after a new snapshot, or with a different `--max-usd`, is refused; pass a new `--run-dir` if you need to.
+Generation is free. Live evolution needs Docker, Fireworks credentials, and your
+explicit total spending cap. Hidden answers are used only by the separate offline
+evaluator.
 
 **Troubleshooting**
 
@@ -95,28 +85,6 @@ All portfolio commands default to `--base-dir runs/portfolio` and today's date; 
 - `stream inputs changed` or `incompatible experiment configuration`: the task, sources, images, or `--max-usd` differ from what that run directory started with. Use a new `--run-dir`.
 - `live execution requires a key and nonzero spending cap`: export `FIREWORKS_API_KEY` and pass a nonzero `--max-usd`.
 - Images rebuilt mid-experiment: start a fresh `--run-dir`; resume rejects changed image IDs by design.
-
-## Portfolio Cockpit (UI)
-
-A local web UI for the portfolio agent. It is research-only like the CLI: nothing in it can place, modify, or cancel orders.
-
-```bash
-scripts/setup.sh --demo        # infra: Python env, Node packages, Docker images, plus synthetic demo data
-scripts/start-backend.sh --demo   # API on http://127.0.0.1:8765, serving runs/portfolio-demo
-scripts/start-frontend.sh      # UI on http://127.0.0.1:5173
-```
-
-Drop `--demo` from `start-backend.sh` to work on your real `runs/portfolio`. `setup.sh --no-docker` skips the image build if you only want to browse. The backend reads `FIREWORKS_API_KEY`, `ETORO_API_KEY` and `ETORO_USER_KEY` from the shell you start it in, and the UI shows only whether each key is set.
-
-What's on screen:
-
-- **Time machine**: every frozen snapshot, grouped by ISO week, with a tick per active call and a flag on weeks that ran evolution. Use ← / → to scrub.
-- **Portfolio map**: a treemap sized by weight and coloured by unrealised P&L. **Now ⇄ Proposed** morphs it into the agent's target weights, so trims shrink, exits vanish, new ideas appear dashed, and cash absorbs the rest. **Table** shows the same numbers as rows.
-- **Agent calls**: one card per active call with current → target weight, thesis, invalidation and benchmark. Hover an evidence ref (for example `market:AAPL.return_30d_pct`) to see the snapshot value it cites. Hovering a card highlights that holding on the map.
-- **Report / Market & candidates / Scoreboard / Evolution**: the delivered `report.md` (sanitised before rendering), the market summaries and screened candidates with coverage counts, the hit rate and excess return of matured calls, and the weekly bundle lineage.
-- **Mission control** (bottom right): runs `portfolio fetch` (paste or upload a CSV, or use the eToro API), `daily`, `evolve` and `score` as background jobs with a live log. Paid commands need a typed spending cap (at most $25 from the UI) and a confirmation tick, and only one job runs at a time.
-
-Safety rails: the API binds only to a loopback address and refuses any other `--host`. Demo directories (marked with `.demo`) are read-only, so the API refuses every job on them. The seeder never replaces a directory without that marker.
 
 ## Install and try the offline demo
 
@@ -161,54 +129,79 @@ The model is fixed to `accounts/fireworks/models/deepseek-v4p1-flash`. Every exe
 
 Live doctor checks cover a tool round trip, structured JSON, streaming, and usage metadata. Executor compaction/restart and complete Pi code-edit behavior require separate container-backed validation; doctor never declares those verified.
 
-## Portfolio agent (recommendations only)
+## OrderOps: test whether the harness improves
 
-The portfolio commands analyse a frozen daily snapshot of an eToro portfolio and produce research recommendations for the account holder's manual review. **They never place, modify, or cancel orders** — there is no order-placement code path; the only outputs are `recommendations.json` and a human-readable `report.md` per snapshot.
+OrderOps investigates synthetic order refunds and warehouse discrepancies. Every
+case has an immediately checkable answer. The model stays fixed while Pi edits
+prompts, skills, scripts and other harness files. Changed files alone do not prove
+improvement: compare frozen harnesses on held-out cases using the offline grader.
 
-Set keys in the **host environment only**; the application does not load `.env`, and keys must never enter task sources, candidate bundles, snapshots, or committed files:
-
-```bash
-export FIREWORKS_API_KEY=...   # Fireworks (model execution in daily/evolve)
-export ETORO_API_KEY=...       # eToro Public API application key  } only needed to fetch
-export ETORO_USER_KEY=...      # eToro Public API user key         } without --csv
-export ETORO_ENVIRONMENT=real  # optional: real (default) or demo
-```
-
-**Getting eToro keys.** Sign in at [api-portal.etoro.com](https://api-portal.etoro.com), open *Settings → Trading → API Key Management*, and create a key with **Read** permission for the environment you want (Real or Demo; each key works for one). You get two values: the public **API key** (`ETORO_API_KEY`) and the **user key** (`ETORO_USER_KEY`), which is shown only once. A read-only key is enough, since the agent never trades.
-
-How the fetch works: it reads `GET /api/v1/trading/info/{real|demo}/pnl` for holdings and cash, then `GET /api/v1/market-data/instruments` to turn instrument ids into tickers and asset classes. Every request carries both keys plus a fresh `x-request-id`. Lots of one instrument are merged, and copy-trading positions and the cash reserved inside a copy count as holdings. Stocks, ETFs and crypto are supported. The fetch aborts with a named error, rather than writing a partial portfolio, if the account holds a short or leveraged position or another instrument type (forex, commodities, indices, CFDs), or if the account currency isn't USD. In that case export the supported holdings and use `--csv`.
-
-Commands (from the repository root; `--base-dir` defaults to `runs/portfolio`):
+Generate 30 development and 20 held-out cases (free, no credentials):
 
 ```bash
-# Fetch today's portfolio + market data into a frozen dated snapshot task (no model calls)
-uv run harness-clone portfolio fetch --base-dir runs/portfolio
-# ...or from a CSV export instead of the live eToro API: --csv /path/to/portfolio.csv
-
-# One execution of the adopted portfolio bundle against today's snapshot (paid; Docker required)
-uv run harness-clone portfolio daily --base-dir runs/portfolio --max-usd 2
-
-# Weekly sequential (k=1) evolution over the snapshots in --date's ISO week (paid; Docker required)
-uv run harness-clone portfolio evolve --base-dir runs/portfolio --max-usd 5
-
-# Offline scoring of delivered daily recommendations against later prices (no model calls)
-uv run harness-clone portfolio score --base-dir runs/portfolio --scoreboard /path/to/scoreboard.json
+uv run harness-clone orderops generate \
+  --tasks-dir runs/orderops/tasks --private-dir runs/orderops/private --seed 42
 ```
 
-Layout under `--base-dir` (all gitignored):
+Public task sources and private answer keys occupy disjoint directories. The executor
+image excludes the generator and grader from its source and installed packages. Use new
+paths to regenerate; the command refuses existing destinations. Start with
+`--dev-count 6 --holdout-count 2` for a small operational smoke test; this is too
+small to support a quality claim.
 
-- `<YYYY-MM-DD>/` — the frozen snapshot task (`task.json`, `source/`), plus the delivered `report.md` (with a host-stamped provenance header: bundle digest, execution id, snapshot fetch time and age) and `recommendations.json` once `daily` runs.
-- `runs/daily-<YYYY-MM-DD>/` and `runs/evolve-<YYYY>-W<ww>/` — one fresh run directory per daily run and per ISO-week evolution, so a new snapshot, image, or `--max-usd` never collides with an earlier run and each `--max-usd` caps that invocation only. Re-running the same day or week resumes it; a resumed week replays from the bundle it started with and never replaces a newer adoption.
-- `adopted.json` and `bundles/<digest>/` — the adopted bundle digest and a digest-verified archive of every adopted bundle, imported into each new run directory.
-- `forward/` — the forward record of delivered daily recommendations; `score` reads it by default (override with `--run-dir`). Evolution re-executions never enter it.
+Build the images after source changes, export `FIREWORKS_API_KEY`, and choose a
+spending cap. This command deliberately requires you to set `ORDEROPS_MAX_USD`:
 
-`daily` and `evolve` refuse to run without an explicit nonzero `--max-usd`, a configured `FIREWORKS_API_KEY`, and a running Docker daemon. `daily` executes the currently adopted bundle exactly once and schema-validates its recommendations before recording them; `evolve` runs the Propose–Probe–Compose loop sequentially over the week's snapshots, and a new bundle is adopted only when the final composed execution is delivered and valid — otherwise the previous bundle is kept. Scores are computed offline afterwards and never feed back into evolution directly; only matured outcomes recorded in a prior scoreboard enter later snapshots as `prior_outcomes.json` evidence.
+```bash
+docker compose -f containers/compose.yaml --profile build build
+uv run harness-clone orderops run \
+  --tasks-dir runs/orderops/tasks --run-dir runs/orderops/experiment \
+  --max-usd "${ORDEROPS_MAX_USD:?Set your total experiment spending cap}"
+```
 
-**Privacy:** everything under `runs/` is gitignored. Snapshots contain your holdings, so keep `runs/portfolio` (and any CSV export or scoreboard) out of version control and treat snapshot directories as private financial data.
+The default arms are:
 
-**Status — read before trusting any output:** live portfolio runs are **unverified**. The underlying live harness run is verified (21 October 2026), but no paid `daily`/`evolve` run has been performed yet. The eToro client follows the published Public API spec (auth headers, PnL and instruments schemas), but no fetch with real keys has been run yet; equity price fetching uses `yfinance` (declared in `pyproject.toml`, imported lazily), locked in `uv.lock`. The offline loop itself is proven end to end with fake executor/editor doubles in `tests/test_portfolio_integration.py`, including that reflected lessons only flow forward to later dated tasks.
+| Arm | Development behavior | Held-out behavior |
+|---|---|---|
+| frozen | Original harness, one execution per case | Original harness, one execution per case |
+| local | Pi refinement; reset bundle and lessons per case | Freeze the final development case's selected bundle |
+| persistent | Pi refinement; carry selected bundles and earlier lessons forward | Freeze the final adopted bundle |
+| retries | Original harness, local-matched attempts with model selection | Original harness, one execution per case |
 
-**Operations after setup:** run `portfolio daily` each trading day and `portfolio evolve` + `portfolio score` weekly (scheduling via cron/launchd is your choice). Treat the first **4-week forward soak** (spec milestone 5) as an operational phase, not a code milestone: collect daily recommendations and matured scores for four weeks, review the scoreboard by hand, and only then let the reports inform any manual decision — made by you, outside this tool.
+Use `--arms frozen persistent` to run a subset. Defaults are Pi editing, k=1,
+sequential refinement, and practical selection (baseline outputs are eligible).
+Retries match actual local execution counts (or scheduled 4 × k if local is omitted),
+not total dollars: refinement also spends on
+editing, selection, and reflection. All arms share one capped ledger. There is no
+guaranteed gain and no hidden score is used to pick candidates. With these defaults,
+a full 30/20 suite schedules 470 execution attempts plus editor calls; select a
+small suite first. Repeat the same run command to resume finished work. Changed
+sources, settings, base bundle or image IDs require a fresh run directory.
+
+Evaluate separately, with the report outside the online run directory:
+
+```bash
+uv run harness-clone orderops evaluate \
+  --run-dir runs/orderops/experiment --answers runs/orderops/private/answers.json \
+  --output runs/orderops/evaluation.json
+```
+
+The report includes development and held-out success, finding/action accuracy,
+false active actions, delivery coverage, row-reference validity, execution cost
+and elapsed execution time, paired held-out outcomes, and total ledger spending.
+Row-reference validity checks that a cited row exists; it does not prove the row
+supports the finding. Narrative quality is ungraded. Pilot results are descriptive.
+Held-out families include transaction-state transitions and renamed CSV columns.
+
+The [design](docs/superpowers/specs/2026-10-23-orderops-design.md) describes the
+contracts, trust boundaries, and experiment protocol. The generic `run` command
+still uses its original experience-library behavior; explicit cross-task bundle
+carry-forward is implemented by the OrderOps experiment runner.
+
+The portfolio seed example has been retired and removed from `examples/`.
+Legacy portfolio commands and UI code remain, and previously archived adopted
+bundles can still be used. A new portfolio daily/evolution run without an archived
+bundle reports the retirement. Test fixtures are not shipped as application seeds.
 
 ## How refinement works
 
@@ -259,6 +252,44 @@ The evaluator refuses to write results inside the online run directory. Unscored
 
 ## Verification
 
+Run setup and the free app/RSI checks with one command:
+
+```bash
+scripts/setup-and-test.sh
+```
+
+This installs the locked Python, Pi worker, and UI dependencies, runs lint and
+the non-Docker Python/Pi tests, builds the worker and UI, then checks both
+deterministic refinement schedules, resume, inspection, offline scoring, and
+the real HTTP API serving the built UI. The Python suite includes OrderOps
+bundle/lesson persistence and evaluation-isolation tests. Logs, JSON reports,
+and run artifacts are retained in a fresh `runs/setup-test.XXXXXX` directory.
+The script exits nonzero on a failed check and stops its temporary API server.
+
+```bash
+scripts/setup-and-test.sh --skip-setup  # reuse installed dependencies
+scripts/setup-and-test.sh --docker     # also build images and test isolation
+export FIREWORKS_API_KEY=...           # live mode only; shell environment
+scripts/setup-and-test.sh --live --max-usd 2
+```
+
+Live mode implies Docker checks and runs all four OrderOps arms with Pi editing
+on two development cases and one held-out case. `--max-usd` is the single shared
+experiment cap; no separate paid preflight is run. Choose a cap appropriate to
+your budget; exhaustion can leave missing deliveries and fail the check. The
+separate offline evaluator saves `live-scores.json` outside the experiment.
+Delivery, known spending, valid INV/DOM/COMPOSE edits in both refinement arms,
+and persistent reflections must pass. An editor fallback fails the RSI check;
+an explicitly validated KEEP_BASE is allowed. Diagnostics for missing structured
+editor responses are saved as `editor-response` records in the experiment's
+`run.sqlite`. Pi control traffic uses authenticated HTTP through `docker exec`
+so workers need no published port on their isolated internal networks.
+Quality scores are reported
+without requiring an improvement. This small pilot does not establish a quality
+gain. Default mode makes no paid calls; dependency installation needs network
+access on a fresh machine. Install uv, Node >=22.19, and npm first; uv provisions
+Python 3.12 as needed.
+
 ```bash
 uv run ruff check .
 uv run pytest -q
@@ -291,7 +322,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
    uv sync --frozen
    npm ci --prefix workers/pi
    uv run ruff check .
-   uv run pytest -q            # expect 261 passed, 3 skipped
+   uv run pytest -q            # expect 304 passed, 4 skipped
    npm test --prefix workers/pi
    npm run build --prefix workers/pi
    ```
@@ -313,7 +344,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
 4. **Verify the isolation boundary** (Docker required, still no paid calls):
 
    ```bash
-   HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q   # expect 3 passed
+   HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q   # expect 4 passed
    ```
 
 5. **Live preflight** — real Fireworks calls for tool use, streaming, and structured output; typically costs well under $0.01:

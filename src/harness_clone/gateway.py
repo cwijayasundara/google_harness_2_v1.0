@@ -15,6 +15,10 @@ from .providers import normalize_usage
 from .storage import BudgetLedger
 
 
+class GatewayPolicyError(ValueError):
+    """A controlled rejection message that is safe to return to the caller."""
+
+
 def stage_group(stage_id: str) -> str:
     """Repair attempts of one stage share its ceiling: strip /attempt-N."""
     return stage_id.rsplit("/attempt-", 1)[0] if "/attempt-" in stage_id else stage_id
@@ -29,9 +33,9 @@ class InferenceGateway:
 
     def prepare(self, payload: dict, token: str = "") -> tuple[str, dict]:
         if payload.get("model") != self.config.model:
-            raise ValueError("gateway permits only the configured model")
+            raise GatewayPolicyError("gateway permits only the configured model")
         if not hmac.compare_digest(token, self.token):
-            raise ValueError("invalid gateway token")
+            raise GatewayPolicyError("invalid gateway token")
         allowed = {
             "model",
             "messages",
@@ -58,14 +62,14 @@ class InferenceGateway:
             "prompt_cache_key",
         }
         if set(payload) - allowed:
-            raise ValueError("unsupported unmetered request options")
+            raise GatewayPolicyError("unsupported unmetered request options")
         if "prompt_cache_key" in payload and not (
             isinstance(payload["prompt_cache_key"], str)
             and 1 <= len(payload["prompt_cache_key"]) <= 256
         ):
-            raise ValueError("invalid prompt cache key")
+            raise GatewayPolicyError("invalid prompt cache key")
         if len(json.dumps(payload).encode()) > 2_000_000:
-            raise ValueError("request too large")
+            raise GatewayPolicyError("request too large")
         payload = dict(payload)
         payload.pop("api_key", None)
         payload["max_tokens"] = min(
@@ -73,13 +77,13 @@ class InferenceGateway:
             self.config.max_output_tokens,
         )
         if payload["max_tokens"] <= 0 or payload.get("n", 1) != 1:
-            raise ValueError("invalid output limits")
+            raise GatewayPolicyError("invalid output limits")
         if payload.get("stream"):
             payload["stream_options"] = {"include_usage": True}
         # UTF-8 bytes conservatively bound text tokens including tool definitions.
         upper_tokens = len(json.dumps(payload).encode()) + 2048
         if upper_tokens + payload["max_tokens"] > self.config.max_context_tokens:
-            raise ValueError("request exceeds conservative context limit")
+            raise GatewayPolicyError("request exceeds conservative context limit")
         ceiling = (
             Decimal(upper_tokens) * Decimal("0.30")
             + Decimal(payload["max_tokens"]) * Decimal("1.20")
@@ -117,10 +121,10 @@ def gateway_server(
             identity = None
             try:
                 if self.path != "/v1/chat/completions":
-                    raise ValueError("unsupported gateway path")
+                    raise GatewayPolicyError("unsupported gateway path")
                 length = int(self.headers.get("Content-Length", 0))
                 if not 0 < length <= 2_000_000:
-                    raise ValueError("invalid body length")
+                    raise GatewayPolicyError("invalid body length")
                 payload = json.loads(self.rfile.read(length))
                 identity, payload = gateway.prepare(
                     payload, self.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -158,13 +162,22 @@ def gateway_server(
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            except Exception:
+            except Exception as exc:
                 if identity:
                     try:
                         gateway.ledger.settle(identity, Usage(known=False))
                     except ValueError:
                         pass
-                body = b'{"error":{"message":"gateway rejected request or upstream failed","type":"gateway_error"}}'
+                # Policy rejections happen before provider admission and have
+                # controlled messages. Persist those diagnostics without keys,
+                # headers, or task contents; keep upstream details private.
+                reason = str(exc) if identity is None and isinstance(exc, GatewayPolicyError) else (
+                    "gateway rejected request or upstream failed"
+                )
+                gateway.ledger.put("gateway-error", str(uuid.uuid4()), {
+                    "stage_id": stage_id, "exception": type(exc).__name__, "reason": reason,
+                })
+                body = json.dumps({"error": {"message": reason, "type": "gateway_error"}}).encode()
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))

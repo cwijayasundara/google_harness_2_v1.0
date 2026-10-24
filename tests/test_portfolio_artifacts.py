@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[1]
-BUNDLE = ROOT / "examples/portfolio-harness"
+BUNDLE = ROOT / "tests/fixtures/portfolio-harness"
 
 
 def load_math():

@@ -15,7 +15,7 @@ from .contracts import PI_IMAGE, EditProposal, HarnessPatch
 from .editors import DeepAgentEditor
 from .evidence import read_sources
 from .gateway import stage_group
-from .pi_client import PiClient
+from .pi_client import DockerHTTPTransport, PiClient
 from .storage import BudgetLedger, fingerprint
 
 
@@ -199,8 +199,6 @@ class PiEditor(DeepAgentEditor):
                     "--cpus=1",
                     "--tmpfs",
                     "/tmp:rw,nosuid,nodev,size=256m",
-                    "--publish",
-                    "127.0.0.1::8081",
                     "--env",
                     f"HARNESS_GATEWAY_URL=http://{gateway}:8080/v1",
                     "--env",
@@ -216,9 +214,8 @@ class PiEditor(DeepAgentEditor):
                     PI_IMAGE,
                 ],
             )
-            address = _checked(run, ["port", worker, "8081/tcp"]).stdout.strip()
-            with httpx.Client(timeout=5) as http:
-                client = PiClient(f"http://{address}", http, worker_token)
+            with httpx.Client(transport=DockerHTTPTransport(worker), timeout=5) as http:
+                client = PiClient("http://pi", http, worker_token)
                 deadline = time.monotonic() + min(30, self.config.timeout_seconds)
                 while True:
                     try:

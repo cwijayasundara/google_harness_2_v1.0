@@ -471,7 +471,7 @@ def test_ensure_adopted_imports_archived_bundle_into_a_fresh_store(tmp_path, sto
 
     from harness_clone.portfolio_ops import archived_bundle, ensure_adopted
 
-    bundle_root = Path(__file__).resolve().parents[1] / "examples" / "portfolio-harness"
+    bundle_root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "portfolio-harness"
     base_dir = tmp_path / "portfolio"
     digest = ensure_adopted(store, base_dir, bundle_root)
     assert archived_bundle(base_dir, digest).is_dir()
@@ -487,7 +487,7 @@ def test_ensure_adopted_refuses_tampered_or_missing_archive(tmp_path, store):
 
     from harness_clone.portfolio_ops import archived_bundle, ensure_adopted
 
-    bundle_root = Path(__file__).resolve().parents[1] / "examples" / "portfolio-harness"
+    bundle_root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "portfolio-harness"
     base_dir = tmp_path / "portfolio"
     digest = ensure_adopted(store, base_dir, bundle_root)
     archive = archived_bundle(base_dir, digest)

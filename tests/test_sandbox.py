@@ -153,7 +153,7 @@ def test_portfolio_math_executes_in_container():
 
     if os.environ.get("HARNESS_TEST_DOCKER") != "1":
         pytest.skip("set HARNESS_TEST_DOCKER=1 after building the executor image")
-    scripts = Path(__file__).resolve().parents[1] / "examples/portfolio-harness/scripts"
+    scripts = Path(__file__).resolve().parents[1] / "tests/fixtures/portfolio-harness/scripts"
     code = (
         "import sys; sys.path.insert(0, '/portfolio-scripts')\n"
         "import portfolio_math\n"
