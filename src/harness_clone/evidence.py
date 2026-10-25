@@ -63,12 +63,17 @@ def build_evidence(
     )
 
 
-def validate_refs(refs: list[str], evidence: EvidenceSnapshot):
-    available = set()
+def citeable_refs(evidence: EvidenceSnapshot) -> list[str]:
+    """IDs a proposal or lesson may cite. Narrative stage text is not an ID."""
+    refs = []
     for record in evidence.records:
-        available.update(
+        refs.extend(
             f"{record.execution_id}:trace:{row['id']}" for row in record.trace if "id" in row
         )
-        available.update(f"{record.execution_id}:artifact:{rel}" for rel in record.artifacts)
-    if not set(refs) <= available:
+        refs.extend(f"{record.execution_id}:artifact:{rel}" for rel in record.artifacts)
+    return refs
+
+
+def validate_refs(refs: list[str], evidence: EvidenceSnapshot):
+    if not set(refs) <= set(citeable_refs(evidence)):
         raise ValueError("proposal cites unavailable evidence")

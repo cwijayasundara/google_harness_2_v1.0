@@ -11,6 +11,11 @@ function canonical(value:unknown):string {
   if(value!==null && typeof value==="object") return `{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
   return JSON.stringify(value);
 }
+export function editFailure(error: unknown): string {
+  const message = error instanceof Error && error.message ? error.message : "edit failure";
+  return message.replace(/\s+/g, " ").slice(0, 300);
+}
+
 export class JobStore {
   private db:DatabaseSync;
   constructor(path:string){this.db=new DatabaseSync(path);this.db.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, fingerprint TEXT NOT NULL, value TEXT NOT NULL)");}

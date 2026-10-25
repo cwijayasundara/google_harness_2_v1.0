@@ -1,7 +1,7 @@
 import {createServer} from "node:http";
 import {timingSafeEqual} from "node:crypto";
 import {mkdir,readFile} from "node:fs/promises";
-import {JobStore,type EditJob,type Job} from "./jobs.js";
+import {editFailure,JobStore,type EditJob,type Job} from "./jobs.js";
 import {executeEdit} from "./edit.js";
 
 await mkdir("/data",{recursive:true});
@@ -15,7 +15,7 @@ async function run(job:Job){
   if(active || !["pending","running"].includes(job.status)) return;
   active=job.id;
   try {const result=await executeEdit(job,jobs,handler=>{abort=handler;});if(jobs.get(job.id).status!=="cancelled")jobs.complete(job.id,result);}
-  catch(error){jobs.fail(job.id,error instanceof Error?error.name:"edit failure");}
+  catch(error){jobs.fail(job.id,editFailure(error));}
   finally{active=undefined;abort=undefined;}
 }
 for(const job of jobs.pending()) void run(job);

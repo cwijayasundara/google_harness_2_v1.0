@@ -13,10 +13,76 @@ import httpx
 from .bundles import read_files
 from .contracts import PI_IMAGE, EditProposal, HarnessPatch
 from .editors import DeepAgentEditor
-from .evidence import read_sources
+from .evidence import citeable_refs, read_sources
 from .gateway import stage_group
 from .pi_client import DockerHTTPTransport, PiClient
 from .storage import BudgetLedger, fingerprint
+
+
+PI_OUTPUT_TOKENS = "16384"
+
+
+def _clip(value, limit: int = 600) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    encoded = text.encode()
+    if len(encoded) <= limit:
+        return text
+    return encoded[:limit].decode(errors="ignore") + " [excerpt]"
+
+
+def editor_brief(task, evidence, parent_files: dict, scope: str, decisions, error: str) -> dict:
+    """Evidence the editor can cite without rereading full rollouts into context."""
+    records = []
+    for record in evidence.records:
+        indices = sorted(
+            {
+                *range(min(2, len(record.trace))),
+                *range(max(0, len(record.trace) - 2), len(record.trace)),
+            }
+        )
+        records.append(
+            {
+                "execution_id": record.execution_id,
+                "delivered": record.delivered,
+                "error": record.error,
+                "artifacts": {
+                    path: _clip(body, 400) for path, body in list(record.artifacts.items())[:4]
+                },
+                "trace": [
+                    {
+                        **{key: row[key] for key in ("id", "type") if key in row},
+                        "content": _clip(row.get("content", ""), 400),
+                    }
+                    for row in (record.trace[i] for i in indices)
+                ],
+            }
+        )
+    refs = citeable_refs(evidence)
+    if len(refs) > 80:
+        refs = [ref for ref in refs if ":artifact:" in ref] + [
+            ref for ref in refs if ":trace:" in ref
+        ][:40]
+    return {
+        "scope": scope,
+        "instructions": (
+            "Edit files under /candidate only. This brief is the evidence; do not search "
+            "other directories or node_modules. Write /candidate/proposal.json with rationale "
+            "and evidence_refs copied exactly from valid_evidence_refs. KEEP_BASE is valid "
+            "and then proposal.json is the only change. Make the smallest edit the evidence supports."
+        ),
+        "task": {
+            "id": task.id,
+            "domain": task.domain,
+            "prompt": task.prompt,
+            "output_paths": task.output_paths,
+        },
+        "sources": {name: _clip(body) for name, body in list(read_sources(task).items())[:8]},
+        "candidate_paths": sorted(parent_files),
+        "evidence_records": records,
+        "valid_evidence_refs": refs,
+        "decisions": decisions,
+        "validation_error": error,
+    }
 
 
 def _docker_call(run, args):
@@ -84,24 +150,14 @@ class PiEditor(DeepAgentEditor):
             "budget_usd": str(self.config.stage_usd),
             "routing_policy": "pi-all-stages-v1",
         }
-        context = {
-            "task": self.task.model_dump(mode="json"),
-            "sources": read_sources(self.task),
-            "scope": scope,
-            "evidence": evidence.model_dump(mode="json"),
-            "decisions": self.decisions,
-            "validation_error": self.error,
-            "parent": read_files(self.store.bundle_path(parent_digest)),
-            "candidate_harnesses": {
-                digest: read_files(self.store.bundle_path(digest))
-                for digest in {r.bundle_digest for r in evidence.records}
-            },
-            "library_harnesses": {
-                item["bundle_digest"]: read_files(self.store.bundle_path(item["bundle_digest"]))
-                for item in evidence.library
-            },
-            "instructions": "INV improves general execution procedure; DOM improves practitioner knowledge; COMPOSE selectively merges/revises edits justified by execution contrasts. KEEP_BASE is valid. Do not change the task or bake its facts into reusable rules.",
-        }
+        context = editor_brief(
+            self.task,
+            evidence,
+            read_files(self.store.bundle_path(parent_digest)),
+            scope,
+            self.decisions,
+            self.error,
+        )
         (work / "context/context.json").write_text(json.dumps(context))
         (work / "context/job.json").write_text(json.dumps(job))
         (work / "context/config.json").write_text(self.config.model_dump_json())
@@ -165,6 +221,8 @@ class PiEditor(DeepAgentEditor):
                     f"HARNESS_GATEWAY_TOKEN={gateway_token}",
                     "--env",
                     f"HARNESS_STAGE_ID={stage_id}",
+                    "--env",
+                    f"HARNESS_MAX_OUTPUT_TOKENS={PI_OUTPUT_TOKENS}",
                     "--mount",
                     f"type=bind,src={self.store.root},dst=/ledger",
                     "--mount",

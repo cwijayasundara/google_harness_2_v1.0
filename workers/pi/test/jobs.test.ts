@@ -21,6 +21,12 @@ test("duplicate requests reacquire one job and changed payloads are rejected",as
   reopened.close();
 });
 
+test("edit failures keep the message instead of the generic error name", async()=>{
+  const {editFailure}=await import("../src/jobs.js");
+  expect(editFailure(new Error("ENOENT: proposal.json"))).toBe("ENOENT: proposal.json");
+  expect(editFailure(new Error("x".repeat(500)))).toHaveLength(300);
+});
+
 test("committed result is immutable and cancellation is terminal",async()=>{
   const {JobStore}=await import("../src/jobs.js");
   const dir=await mkdtemp(join(tmpdir(),"pi-jobs-"));dirs.push(dir);

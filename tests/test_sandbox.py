@@ -55,6 +55,44 @@ def test_timeout_and_exit_failure_are_recorded(tmp_path, monkeypatch):
     assert result.error == "timeout"
 
 
+def test_worker_crash_retries_once_then_records_stderr(tmp_path, monkeypatch):
+    from harness_clone.sandbox import DockerExecutor
+    from harness_clone.storage import RunStore
+
+    store = RunStore(tmp_path / "runs")
+    digest = store.publish_bundle(Path(__file__).parents[1] / "examples/base-harness")
+    task = TaskSpec(
+        id="one", domain="code", prompt="make x", source_root=tmp_path, output_paths=["x.txt"]
+    )
+    executor = DockerExecutor(store, ExperimentConfig(max_usd="1"))
+    calls = []
+
+    class Proc:
+        def __init__(self, code, err):
+            self.returncode, self.stderr, self.stdout = code, err, ""
+
+    def launch(work):
+        calls.append(1)
+        if len(calls) == 1:
+            return Proc(1, "Traceback: boom")
+        (work / "scratch" / "terminal.json").write_text(
+            '{"trace":[{"id":"0","type":"ai","content":"ok"}]}'
+        )
+        (work / "output" / "x.txt").write_text("done")
+        return Proc(0, "")
+
+    monkeypatch.setattr(executor, "_launch", launch)
+    delivered = executor.execute(task, digest, "base1")
+    assert delivered.delivered is True
+    assert len(calls) == 2
+
+    calls.clear()
+    monkeypatch.setattr(executor, "_launch", lambda work: calls.append(1) or Proc(1, "Killed"))
+    failed = executor.execute(task, digest, "base2")
+    assert failed.error == "worker-exit: Killed"
+    assert len(calls) == 2
+
+
 def test_task_source_and_outputs_cannot_escape(tmp_path):
     from harness_clone.tasks import load_task
 
@@ -85,6 +123,64 @@ def test_gateway_enforces_model_budget_and_unknown_usage(tmp_path):
     gateway.finish(request_id, {"choices": []})
     with pytest.raises(ValueError, match="unknown"):
         gateway.prepare({"model": ExperimentConfig().model, "messages": []}, token="token")
+
+
+def test_context_bound_uses_tokens_and_edit_stages_can_finish_a_tool_call(tmp_path, monkeypatch):
+    from decimal import Decimal
+    from harness_clone.gateway import InferenceGateway
+    from harness_clone.storage import BudgetLedger
+
+    ledger = BudgetLedger(tmp_path / "b.sqlite", Decimal("5"))
+    gateway = InferenceGateway(
+        ExperimentConfig(max_usd="5"), ledger, "token", stage_id="edit/attempt-0"
+    )
+    identity, accepted = gateway.prepare(
+        {
+            "model": ExperimentConfig().model,
+            "messages": [{"role": "user", "content": "a" * 125_000}],
+        },
+        token="token",
+    )
+    assert accepted["max_tokens"] == 4096
+    gateway.finish(identity, {"usage": {"prompt_tokens": 10, "completion_tokens": 1}})
+    monkeypatch.setenv("HARNESS_MAX_OUTPUT_TOKENS", "16384")
+    editor = InferenceGateway(
+        ExperimentConfig(max_usd="5"), ledger, "token", stage_id="task/inv1/attempt-0"
+    )
+    identity, room = editor.prepare(
+        {
+            "model": ExperimentConfig().model,
+            "messages": [{"role": "user", "content": "edit"}],
+            "max_tokens": 16384,
+        },
+        token="token",
+    )
+    assert room["max_tokens"] == 16384
+    editor.finish(identity, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    executor = InferenceGateway(
+        ExperimentConfig(max_usd="5"), ledger, "token", stage_id="orderops/holdout/frozen"
+    )
+    _, capped = executor.prepare(
+        {
+            "model": ExperimentConfig().model,
+            "messages": [{"role": "user", "content": "run"}],
+            "max_tokens": 16384,
+        },
+        token="token",
+    )
+    assert capped["max_tokens"] == 4096
+    with pytest.raises(ValueError, match="context limit"):
+        InferenceGateway(
+            ExperimentConfig(max_usd="5"),
+            BudgetLedger(tmp_path / "c.sqlite", Decimal("5")),
+            "token",
+        ).prepare(
+            {
+                "model": ExperimentConfig().model,
+                "messages": [{"role": "user", "content": "b" * 400_000}],
+            },
+            token="token",
+        )
 
 
 def test_gateway_rejects_unmetered_generation_overrides(tmp_path):

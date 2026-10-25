@@ -13,21 +13,33 @@ def editor_with_model(tmp_path, monkeypatch, replies):
     model = ScriptedModel(replies=replies)
     monkeypatch.setenv("FIREWORKS_API_KEY", "test-not-a-key")
     monkeypatch.setattr("harness_clone.editors.make_model", lambda *a, **k: model)
-    task = TaskSpec(id="t", domain="test", prompt="choose", source_root=tmp_path,
-                    output_paths=["answer.json"])
+    task = TaskSpec(
+        id="t", domain="test", prompt="choose", source_root=tmp_path, output_paths=["answer.json"]
+    )
     editor = DeepAgentEditor(task, ExperimentConfig(max_usd="1"), RunStore(tmp_path / "run"))
     editor.set_stage("t/select", 0, "", [])
     return editor, model
 
 
 def test_selector_recovers_from_truncated_response_without_a_choice(tmp_path, monkeypatch):
-    editor, model = editor_with_model(tmp_path, monkeypatch, [
-        AIMessage(content="", response_metadata={"finish_reason": "length"}),
-        AIMessage(content="", tool_calls=[{
-            "name": "Choice", "args": {"candidate": "candidate-1", "reason": "matches inputs"},
-            "id": "choice-1", "type": "tool_call",
-        }]),
-    ])
+    editor, model = editor_with_model(
+        tmp_path,
+        monkeypatch,
+        [
+            AIMessage(content="", response_metadata={"finish_reason": "length"}),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "Choice",
+                        "args": {"candidate": "candidate-1", "reason": "matches inputs"},
+                        "id": "choice-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ],
+    )
     result = editor._run("SELECT", {"candidates": {"candidate-1": {}}}, Choice)
     assert result == Choice(candidate="candidate-1", reason="matches inputs")
     assert len(model.seen) == 2
@@ -51,14 +63,22 @@ def test_reflection_bounds_repeated_traces_and_preserves_evidence_ids(tmp_path, 
     from harness_clone.evidence import build_evidence, validate_refs
 
     editor, _ = editor_with_model(tmp_path, monkeypatch, [])
-    records = [ExecutionRecord(
-        execution_id=f"exec-{i}", task_id="t", bundle_digest="0" * 64,
-        artifacts={"answer.json": "X" * 30000},
-        trace=[{"id": j, "content": "Y" * 10000} for j in range(30)],
-    ) for i in range(4)]
+    records = [
+        ExecutionRecord(
+            execution_id=f"exec-{i}",
+            task_id="t",
+            bundle_digest="0" * 64,
+            artifacts={"answer.json": "X" * 30000},
+            trace=[{"id": j, "content": "Y" * 10000} for j in range(30)],
+        )
+        for i in range(4)
+    ]
     evidence = build_evidence(editor.task, records)
-    result = TaskResult(task_id="t", executions={r.execution_id: r for r in records},
-                        selection=SelectionRecord(chosen_execution_id="exec-3"))
+    result = TaskResult(
+        task_id="t",
+        executions={r.execution_id: r for r in records},
+        selection=SelectionRecord(chosen_execution_id="exec-3"),
+    )
     captured = {}
 
     def capture(role, context, schema):
@@ -70,6 +90,73 @@ def test_reflection_bounds_repeated_traces_and_preserves_evidence_ids(tmp_path, 
     visible = captured["evidence"]["records"]
     assert [r["execution_id"] for r in visible] == ["exec-0", "exec-3"]
     for record in visible:
-        validate_refs([f"{record['execution_id']}:trace:{row['id']}"
-                       for row in record["trace"]], evidence)
+        validate_refs(
+            [f"{record['execution_id']}:trace:{row['id']}" for row in record["trace"]], evidence
+        )
     assert "excerpt" in captured["evidence"]["note"].lower()
+    assert captured["valid_evidence_refs"]
+    for ref in captured["valid_evidence_refs"]:
+        validate_refs([ref], evidence)
+
+
+def test_reflection_repairs_refs_that_are_not_evidence_ids(tmp_path, monkeypatch):
+    from harness_clone.contracts import ExecutionRecord, SelectionRecord, TaskResult
+    from harness_clone.evidence import build_evidence
+
+    record = ExecutionRecord(
+        execution_id="exec-1",
+        task_id="t",
+        bundle_digest="0" * 64,
+        artifacts={"answer.json": "ok"},
+        trace=[{"id": "0", "content": "checked"}],
+    )
+    valid = "exec-1:trace:0"
+    editor, model = editor_with_model(
+        tmp_path,
+        monkeypatch,
+        [
+            AIMessage(
+                content="",
+                response_metadata={"finish_reason": "tool_calls"},
+                tool_calls=[
+                    {
+                        "name": "Reflection",
+                        "id": "bad",
+                        "type": "tool_call",
+                        "args": {
+                            "cue": "stage errors",
+                            "lesson": "read the record",
+                            "evidence_refs": ["stages[0] status=fallback"],
+                            "confidence": "observational",
+                        },
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                response_metadata={"finish_reason": "tool_calls"},
+                tool_calls=[
+                    {
+                        "name": "Reflection",
+                        "id": "good",
+                        "type": "tool_call",
+                        "args": {
+                            "cue": "stage errors",
+                            "lesson": "read the record",
+                            "evidence_refs": [valid],
+                            "confidence": "observational",
+                        },
+                    }
+                ],
+            ),
+        ],
+    )
+    evidence = build_evidence(editor.task, [record])
+    result = TaskResult(
+        task_id="t",
+        executions={record.execution_id: record},
+        selection=SelectionRecord(chosen_execution_id=record.execution_id),
+    )
+    draft = editor.reflect(evidence, result)
+    assert draft.evidence_refs == [valid]
+    assert len(model.seen) == 2

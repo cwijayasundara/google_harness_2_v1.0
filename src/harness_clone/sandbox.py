@@ -106,10 +106,26 @@ class DockerExecutor:
                     )
                 )
                 (work / "control/config.json").write_text(self.config.model_dump_json())
-                process = self._launch(work)
-                if process.returncode:
-                    record.status, record.error = "failed", "worker-exit"
-                else:
+                process = None
+                for attempt in range(2):
+                    process = self._launch(work)
+                    if not process.returncode:
+                        break
+                    detail = (process.stderr or "").strip().replace("\n", " ")[:300]
+                    # A crash before the terminal record drops the trace. Try once more.
+                    if attempt == 0 and not (work / "scratch" / "terminal.json").is_file():
+                        for part in ("output", "scratch"):
+                            shutil.rmtree(work / part, ignore_errors=True)
+                            (work / part).mkdir(mode=0o777)
+                            (work / part).chmod(0o777)
+                        continue
+                    record.status, record.error = (
+                        "failed",
+                        f"worker-exit: {detail}" if detail else "worker-exit",
+                    )
+                    process = None
+                    break
+                if process is not None and not process.returncode:
                     terminal = work / "scratch/terminal.json"
                     if not terminal.is_file() or terminal.is_symlink():
                         raise ValueError("worker returned no terminal record")

@@ -28,7 +28,7 @@ def test_client_does_not_return_partial_or_failed_candidate():
         return httpx.Response(200, json={"id": "job", "status": "failed", "error": "invalid edit"})
 
     client = PiClient("http://pi", httpx.Client(transport=httpx.MockTransport(handle)))
-    with pytest.raises(RuntimeError, match="failed"):
+    with pytest.raises(RuntimeError, match="failed: invalid edit"):
         client.wait("job", timeout=1)
 
 
@@ -68,3 +68,44 @@ def test_pi_candidate_export_is_a_validated_patch(tmp_path, monkeypatch):
     assert proposal.patch.upserts == {"scripts/new.py": 'print("checked")\n'}
     apply_patch(store.bundle_path(digest), proposal.patch, tmp_path / "adoptable")
     assert not (store.bundle_path(digest) / "scripts/new.py").exists()
+
+
+def test_pi_context_names_citable_refs_without_full_traces(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from harness_clone.pi_editor import PiEditor
+    from harness_clone.storage import RunStore
+    from harness_clone.contracts import ExperimentConfig, TaskSpec, ExecutionRecord
+    from harness_clone.evidence import build_evidence, validate_refs
+
+    store = RunStore(tmp_path / "runs")
+    digest = store.publish_bundle(Path(__file__).parents[1] / "examples/base-harness")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "values.json").write_text('{"n": 1}')
+    task = TaskSpec(id="t", domain="code", prompt="sum", source_root=source, output_paths=["x.txt"])
+    editor = PiEditor(task, ExperimentConfig(max_usd="1", editor_policy="pi"), store)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "not-a-key")
+    marker = "TRACEBODY" * 5000
+    record = ExecutionRecord(
+        execution_id="base",
+        task_id="t",
+        bundle_digest=digest,
+        artifacts={"x.txt": marker},
+        trace=[{"id": "0", "type": "ai", "content": marker}],
+    )
+    evidence = build_evidence(task, [record])
+    seen = {}
+
+    def edit(work, job):
+        seen["context"] = json.loads((work / "context/context.json").read_text())
+        return {"rationale": "keep", "evidence_refs": ["base:trace:0"]}
+
+    monkeypatch.setattr(editor, "_launch_edit", edit)
+    editor.propose("INV", digest, evidence)
+    dumped = json.dumps(seen["context"])
+    assert len(dumped.encode()) < 24_000
+    assert marker not in dumped
+    refs = seen["context"]["valid_evidence_refs"]
+    validate_refs(["base:trace:0", "base:artifact:x.txt"], evidence)
+    assert "base:trace:0" in refs and "base:artifact:x.txt" in refs

@@ -15,6 +15,7 @@ test("Pi emits the bounded max_tokens field accepted by the inference gateway", 
       throw Error("Captured before network access");
     }});
     expect(payload?.max_tokens).toBe(512);
+    expect(model.maxTokens).toBe(16384);
     expect(payload).not.toHaveProperty("max_completion_tokens");
     expect(payload).not.toHaveProperty("store");
   } finally {vi.unstubAllEnvs();}

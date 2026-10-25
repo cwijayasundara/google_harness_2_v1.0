@@ -73,17 +73,21 @@ class InferenceGateway:
         payload = dict(payload)
         payload.pop("api_key", None)
         payload["max_tokens"] = min(
-            int(payload.get("max_tokens") or self.config.max_output_tokens),
-            self.config.max_output_tokens,
+            int(payload.get("max_tokens") or self._output_limit()),
+            self._output_limit(),
         )
         if payload["max_tokens"] <= 0 or payload.get("n", 1) != 1:
             raise GatewayPolicyError("invalid output limits")
         if payload.get("stream"):
             payload["stream_options"] = {"include_usage": True}
-        # UTF-8 bytes conservatively bound text tokens including tool definitions.
-        upper_tokens = len(json.dumps(payload).encode()) + 2048
-        if upper_tokens + payload["max_tokens"] > self.config.max_context_tokens:
+        encoded = len(json.dumps(payload).encode())
+        # Two bytes per token still overestimates English, JSON, and code.
+        # Counting every byte as a token rejected prompts that fit the window.
+        context_tokens = encoded // 2 + 2048
+        if context_tokens + payload["max_tokens"] > self.config.max_context_tokens:
             raise GatewayPolicyError("request exceeds conservative context limit")
+        # The reservation stays a one-byte-per-token upper bound on cost.
+        upper_tokens = encoded + 2048
         ceiling = (
             Decimal(upper_tokens) * Decimal("0.30")
             + Decimal(payload["max_tokens"]) * Decimal("1.20")
@@ -93,6 +97,19 @@ class InferenceGateway:
         self.ledger.allocate(group, self.config.stage_usd)
         self.ledger.reserve(identity, ceiling, allocation_id=group)
         return identity, payload
+
+    def _output_limit(self) -> int:
+        """Edit attempts may spend output on reasoning and still emit a tool call."""
+        raw = os.environ.get("HARNESS_MAX_OUTPUT_TOKENS")
+        if raw and "/attempt-" in self.stage_id:
+            try:
+                limit = int(raw)
+            except ValueError:
+                raise GatewayPolicyError("invalid output cap") from None
+            if not 64 <= limit <= 32768:
+                raise GatewayPolicyError("invalid output cap")
+            return limit
+        return self.config.max_output_tokens
 
     def finish(self, identity: str, response: dict):
         self.ledger.settle(identity, normalize_usage(response))
@@ -171,12 +188,20 @@ def gateway_server(
                 # Policy rejections happen before provider admission and have
                 # controlled messages. Persist those diagnostics without keys,
                 # headers, or task contents; keep upstream details private.
-                reason = str(exc) if identity is None and isinstance(exc, GatewayPolicyError) else (
-                    "gateway rejected request or upstream failed"
+                reason = (
+                    str(exc)
+                    if identity is None and isinstance(exc, GatewayPolicyError)
+                    else ("gateway rejected request or upstream failed")
                 )
-                gateway.ledger.put("gateway-error", str(uuid.uuid4()), {
-                    "stage_id": stage_id, "exception": type(exc).__name__, "reason": reason,
-                })
+                gateway.ledger.put(
+                    "gateway-error",
+                    str(uuid.uuid4()),
+                    {
+                        "stage_id": stage_id,
+                        "exception": type(exc).__name__,
+                        "reason": reason,
+                    },
+                )
                 body = json.dumps({"error": {"message": reason, "type": "gateway_error"}}).encode()
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")

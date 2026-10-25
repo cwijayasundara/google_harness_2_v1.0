@@ -43,7 +43,8 @@ process.stdin.on('end', () => {
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         timeout = request.extensions.get("timeout", {}).get("read") or 30
         payload = {
-            "method": request.method, "path": request.url.raw_path.decode("ascii"),
+            "method": request.method,
+            "path": request.url.raw_path.decode("ascii"),
             "headers": dict(request.headers),
             "body": base64.b64encode(request.read()).decode("ascii"),
             "timeout": max(1, int(timeout * 1000)),
@@ -51,7 +52,10 @@ process.stdin.on('end', () => {
         try:
             result = subprocess.run(
                 ["docker", "exec", "-i", self.container, "node", "-e", self._REQUEST],
-                input=json.dumps(payload), text=True, capture_output=True, timeout=timeout + 2,
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                timeout=timeout + 2,
             )
         except subprocess.TimeoutExpired as exc:
             raise httpx.ReadTimeout("Pi control request timed out", request=request) from exc
@@ -63,8 +67,9 @@ process.stdin.on('end', () => {
             )
         try:
             response = json.loads(result.stdout)
-            return httpx.Response(response["status"],
-                                  content=base64.b64decode(response["body"], validate=True))
+            return httpx.Response(
+                response["status"], content=base64.b64decode(response["body"], validate=True)
+            )
         except (ValueError, KeyError, TypeError) as exc:
             raise httpx.RemoteProtocolError("invalid Pi control response", request=request) from exc
 
@@ -98,7 +103,9 @@ class PiClient:
             if job["status"] == "completed":
                 return job["result"]
             if job["status"] in {"failed", "cancelled"}:
-                raise RuntimeError(f"Pi job {job['status']}")
+                detail = str(job.get("error") or "").strip()
+                suffix = f": {detail[:300]}" if detail else ""
+                raise RuntimeError(f"Pi job {job['status']}{suffix}")
             time.sleep(0.2)
         self.cancel(job_id)
         raise TimeoutError("Pi editing job timed out")
