@@ -5,9 +5,12 @@
 #   scripts/start-backend.sh --demo          serve the synthetic runs/portfolio-demo
 #   scripts/start-backend.sh --base-dir DIR  serve another portfolio base directory
 #
-# Environment: PORT (default 8765). Keys are read from this shell only.
+# Environment: PORT (default 8765). Keys come from this shell or from .env.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
+source scripts/load-dotenv.sh
+load_dotenv
 
 BASE_DIR="${HARNESS_UI_BASE_DIR:-runs/portfolio}"
 while [ $# -gt 0 ]; do
@@ -44,6 +47,6 @@ if [ -n "$PIDS" ]; then
   fi
 fi
 
-[ -n "${FIREWORKS_API_KEY:-}" ] || echo "note: FIREWORKS_API_KEY is not set; paid runs will be disabled in the UI."
+[ -n "${FIREWORKS_API_KEY:-}" ] || echo "note: FIREWORKS_API_KEY is not set in the shell or .env; paid runs will be disabled in the UI."
 echo "Cockpit API → http://127.0.0.1:${PORT}  (serving $BASE_DIR)"
 exec uv run python -m harness_clone.ui_server --base-dir "$BASE_DIR" --host 127.0.0.1 --port "$PORT"

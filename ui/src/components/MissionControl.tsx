@@ -12,7 +12,6 @@ export function MissionControl({ status, selectedDate, onJobFinished }: Props) {
   const [open, setOpen] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"etoro" | "csv">("csv");
   const [csv, setCsv] = useState("");
   const [cap, setCap] = useState("");
   const [confirmed, setConfirmed] = useState(false);
@@ -39,7 +38,7 @@ export function MissionControl({ status, selectedDate, onJobFinished }: Props) {
     setError(null);
     const body: JobRequest = { command };
     if (useDate && selectedDate) body.date = selectedDate;
-    if ((command === "fetch" || command === "daily") && source === "csv" && csv.trim()) body.csv = csv;
+    if ((command === "fetch" || command === "daily") && csv.trim()) body.csv = csv;
     if (command === "daily" || command === "evolve") {
       body.max_usd = cap;
       body.confirm_paid = confirmed;
@@ -89,40 +88,24 @@ export function MissionControl({ status, selectedDate, onJobFinished }: Props) {
               1 · Fetch snapshot <span className="cost free">free</span>
             </h3>
             <div className="field">
-              <div className="segmented" role="group" aria-label="Portfolio source">
-                <button aria-pressed={source === "csv"} onClick={() => setSource("csv")}>
-                  CSV
-                </button>
-                <button
-                  aria-pressed={source === "etoro"}
-                  onClick={() => setSource("etoro")}
-                  title={status?.keys.etoro ? "" : "Set ETORO_API_KEY and ETORO_USER_KEY in the backend's environment"}
-                >
-                  eToro API {status?.keys.etoro ? "" : "(no key)"}
-                </button>
-              </div>
+              <textarea
+                value={csv}
+                onChange={(e) => setCsv(e.target.value)}
+                placeholder={"instrument,ticker,asset_class,units,open_rate,current_price\nApple Inc,AAPL,equity,10,150,190\nCash,CASH,cash,500,1,1"}
+              />
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setCsv(await file.text());
+                }}
+              />
             </div>
-            {source === "csv" && (
-              <div className="field">
-                <textarea
-                  value={csv}
-                  onChange={(e) => setCsv(e.target.value)}
-                  placeholder={"instrument,ticker,asset_class,units,open_rate,current_price\nApple Inc,AAPL,equity,10,150,190\nCash,CASH,cash,500,1,1"}
-                />
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) setCsv(await file.text());
-                  }}
-                />
-              </div>
-            )}
             <div className="field">
               <button
                 className="primary-btn"
-                disabled={running || (source === "csv" && !csv.trim()) || (source === "etoro" && !status?.keys.etoro)}
+                disabled={running || !csv.trim()}
                 onClick={() => launch("fetch")}
               >
                 Fetch

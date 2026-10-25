@@ -3,8 +3,9 @@
 Read-mostly: it serves frozen snapshots, delivered recommendations, the
 scoreboard, and evolution runs from the portfolio base directory, and can
 launch the existing ``harness-clone portfolio`` commands as background jobs.
-Recommendations only: there is no order-placement path here either. Keys stay
-in the host environment; the API reports only whether they are configured.
+Recommendations only: there is no order-placement path here either. Keys come
+from the shell or from ``.env`` in the working directory. The API reports only
+whether they are configured.
 """
 
 import argparse
@@ -26,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .envfile import load_env_file
 from .portfolio_ops import read_adopted
 
 DEFAULT_BASE_DIR = Path("runs/portfolio")
@@ -224,10 +226,7 @@ def create_app(
             "demo": (base_dir / DEMO_MARKER).is_file(),
             "adopted_bundle": read_adopted(base_dir),
             "docker": shutil.which("docker") is not None,
-            "keys": {
-                "fireworks": bool(os.environ.get("FIREWORKS_API_KEY")),
-                "etoro": bool(os.environ.get("ETORO_API_KEY") and os.environ.get("ETORO_USER_KEY")),
-            },
+            "keys": {"fireworks": bool(os.environ.get("FIREWORKS_API_KEY"))},
             "max_ui_usd": str(MAX_UI_USD),
             "job_running": (jobs.running() or {}).get("id"),
         }
@@ -311,6 +310,7 @@ def create_app(
 
 
 def main(argv=None):
+    load_env_file()
     p = argparse.ArgumentParser(prog="harness-clone-ui")
     p.add_argument(
         "--base-dir",

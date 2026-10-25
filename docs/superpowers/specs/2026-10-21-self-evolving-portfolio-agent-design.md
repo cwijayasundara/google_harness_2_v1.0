@@ -9,7 +9,7 @@ Classification: Architectural (new subsystem on the existing harness-clone)
 Build a recommendations-only agent on top of this repository's existing
 self-evolving harness (`src/harness_clone/`) that, every day:
 
-1. Reads the user's eToro portfolio and a broad equity/crypto market scan.
+1. Reads the user's portfolio from a holdings CSV and a broad equity/crypto market scan.
 2. Produces a dated recommendation report (hold / trim / add / new idea).
 3. Improves over time by evolving its own harness — prompts, guardrails,
    memory, skills, scripts, subagents, and settings — through the harness's
@@ -25,7 +25,7 @@ improvement if the scoreboard says so on data the variant did not see.
 
 | Decision | Choice |
 |---|---|
-| eToro access | Public API key, host-side only |
+| Portfolio source | Holdings CSV, host-side only |
 | Success measurement | Backtest bootstrap, then forward paper-tracking |
 | Cadence / horizon | Daily review, 1-week scoring horizon |
 | Discovery universe | S&P 500 + top-100 crypto (host-screened) |
@@ -79,13 +79,10 @@ its score by editing its own grader, data, or budget.
 Located outside any harness bundle (proposed: `src/harness_clone/portfolio/`
 for library code plus a thin CLI entry, final layout set in the plan):
 
-- **eToro client** — read-only calls to `https://public-api.etoro.com`
-  for portfolio PnL/positions and trading history. The API key is read from
-  the host environment only (name to be confirmed against the live API
-  during milestone 1; working assumption `ETORO_API_KEY`). It is never
-  written to a task source, bundle, run directory, or container. A CSV
-  export importer producing the identical snapshot schema is the fallback
-  if API access is not enabled on the account, and the test fixture format.
+- **Portfolio CSV loader** — reads a holdings file into the snapshot schema.
+  The file stays on the host. It is never written into a task source,
+  bundle, run directory, or container. The test fixture uses the same
+  schema.
 - **Market data fetcher** — equities via yfinance, crypto via CoinGecko
   (free tiers first; provider behind a small interface so Alpaca/TwelveData
   can replace yfinance without touching downstream code). Fetches daily
@@ -146,7 +143,7 @@ that evaluation output is refused inside the online run directory.
 
 - Execution containers keep the existing posture: non-root, dropped
   capabilities, read-only bundle/source mounts, no public egress, scoped
-  gateway token. The eToro and market-data keys never enter a container.
+  gateway token. Portfolio files and market-data credentials never enter a container.
 - Portfolio snapshots are private financial data: snapshot directories live
   outside git (gitignored run area, e.g. `runs/portfolio/`), never in
   `examples/` or any committed path.
@@ -154,7 +151,7 @@ that evaluation output is refused inside the online run directory.
   review. The system has no order-placement code path at all.
 - Paid model calls remain gated by `--max-usd` with the existing ledger;
   daily and evolution commands refuse to run with a zero cap.
-- Failure of the eToro API or a market provider aborts snapshot building
+- Failure of the holdings CSV or a market provider aborts snapshot building
   with a clear error. The system never fabricates a partial portfolio or
   silently substitutes stale prices; a stale snapshot is labeled with its
   fetch timestamp and age in the report.
@@ -288,10 +285,9 @@ an outcome can only appear in tasks dated after its maturity date.
    a complete live `run` fails with a gateway rejection at baseline while
    `doctor --live` passes — and prove one end-to-end live execution.
    Nothing portfolio-specific is built on an unverified live path.
-1. **Trusted data layer.** eToro client (+ CSV fallback), market fetcher,
-   screener, snapshot builder, with deterministic offline tests using
-   recorded fixtures. Verifies the user's API key actually works; if not,
-   the CSV path becomes the v1 source and the API is revisited.
+1. **Trusted data layer.** CSV portfolio loader, market fetcher,
+   screener, and snapshot builder, with deterministic offline tests using
+   recorded fixtures.
 2. **Portfolio base harness + single task.** Bundle per Section 3.2,
    recommendation schema validation, one offline/demo-mode run producing
    a schema-valid `recommendations.json` and `report.md`.
@@ -305,10 +301,6 @@ an outcome can only appear in tasks dated after its maturity date.
 
 ## 10. Risks and open questions
 
-- **eToro API entitlement** is unverified for this account (public API is
-  limited-availability). Mitigation: CSV fallback, milestone 1 tests the
-  key first. Exact auth header/key env name to be confirmed against the
-  live API in milestone 1.
 - **Live harness run is unverified** (gateway rejection). Milestone 0
   gates everything; if it cannot be resolved, the design falls back to
   demo-mode scheduling proof only, and that limitation is reported rather

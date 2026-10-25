@@ -2,7 +2,7 @@
 
 A local research MVP for recursively optimizing a Deep Agents harness with Fireworks DeepSeek V4.1 Flash and Pi Durable code editing.
 
-The optimizer versions system prompts, guardrails, memory, tool guidance, subagents, skills, scripts, middleware, and declared harness settings. The controller, evaluator, credentials, isolation, and spending limits stay outside its editable surface.
+The optimizer versions system prompts, guardrails, memory, tool guidance, subagents, skills, scripts, middleware, and declared harness settings. The controller, evaluator, credentials, isolation, and spending limits stay outside its editable surface. How the pieces fit at runtime is in [docs/architecture.md](docs/architecture.md).
 
 ## Status
 
@@ -36,13 +36,17 @@ docker compose -f containers/compose.yaml --profile build build
 HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 4 passed
 ```
 
-**4. Set credentials in your shell** (host environment only; the app never reads `.env`):
+**4. Put credentials in `.env`** at the repository root. The file is gitignored. Confirm the Fireworks key without printing it, then follow [Run with a real API key](#run-with-a-real-api-key):
+
+```text
+FIREWORKS_API_KEY=your-fireworks-key
+```
 
 ```bash
-export FIREWORKS_API_KEY=...    # required for every paid command
-export ETORO_API_KEY=...        # eToro application key, only for `portfolio fetch/daily` without --csv
-export ETORO_USER_KEY=...       # eToro user key, paired with the application key
+uv run harness-clone doctor   # fireworks_key_configured: true; the value is not printed
 ```
+
+`harness-clone demo` stays scripted when the key is set. It does not call Fireworks.
 
 **5. Live preflight** (costs well under $0.01):
 
@@ -83,7 +87,7 @@ evaluator.
 
 - `no baseline execution delivered`: the run reached Docker but the baseline failed. Read the execution records with `sqlite3 <run-dir>/run.sqlite "select id, value from records where kind='execution'"`; `worker-exit` with zero tokens means the gateway refused the request before any paid call.
 - `stream inputs changed` or `incompatible experiment configuration`: the task, sources, images, or `--max-usd` differ from what that run directory started with. Use a new `--run-dir`.
-- `live execution requires a key and nonzero spending cap`: export `FIREWORKS_API_KEY` and pass a nonzero `--max-usd`.
+- `live execution requires a key and nonzero spending cap`: put `FIREWORKS_API_KEY` in `.env` and pass a nonzero `--max-usd`.
 - Images rebuilt mid-experiment: start a fresh `--run-dir`; resume rejects changed image IDs by design.
 
 ## Install and try the offline demo
@@ -102,32 +106,53 @@ uv run harness-clone resume --run-dir runs/demo-parallel
 
 Both demos process two ordered tasks. At k=2 each task has eight executions and six editing stages. Each run retains adopted bundles, evidence references, and supported lessons. Repeating the command resumes compatible completed work. A changed model, task stream, source content, or experiment configuration requires a new run directory.
 
-## Live execution prerequisites
+## Run with a real API key
 
-Start Docker and build the images from the repository root:
+Paid commands call Fireworks as `accounts/fireworks/models/deepseek-v4p1-flash`. Every execution, editor, subagent, and summary role uses that model. Keys come from `.env` in the working directory. Run the commands below from the repository root so that file is the one next to this README:
 
-```bash
-docker build -f containers/executor.Dockerfile -t harness-clone-executor:0.1 .
-docker build -f containers/pi.Dockerfile -t harness-clone-pi:0.1 .
+```text
+FIREWORKS_API_KEY=your-fireworks-key
 ```
 
-Set `FIREWORKS_API_KEY` in the **host environment**. The application does not load `.env` automatically. Do not place a key in task sources, candidate bundles, or committed configuration.
+```bash
+uv run harness-clone doctor
+```
 
-Paid calls require an explicit nonzero cap. The following commands are examples; choose your own budget before running them:
+`harness-clone`, the cockpit API, `scripts/setup-and-test.sh`, and `scripts/start-backend.sh` read `FIREWORKS_API_KEY` from `.env`. If that name is already set in the environment, that value is kept. Other lines are ignored. `.env` is gitignored. Do not commit it, and do not copy the key into task sources or candidate bundles.
+
+`fireworks_key_configured` is true when `FIREWORKS_API_KEY` was read. The report does not print the value.
+
+Docker has to be running before any live command. Rebuild the images after a source change. Live runs pin image IDs, so a rebuilt image needs a fresh `--run-dir`:
 
 ```bash
-uv run harness-clone doctor --live --max-usd 2
+docker compose -f containers/compose.yaml --profile build build
+```
+
+The account key is passed only into the inference gateway container. The `.env` file is not mounted into a container. The executor and Pi containers sit on an internal network and receive a one-shot gateway token, so generated harness code never sees the credential. A missing key or a cap of `0` stops before a paid call: `doctor --live` reports that `FIREWORKS_API_KEY` is not configured, and `run` / `orderops run` report `live execution requires a key and nonzero spending cap`.
+
+Confirm the key with a live preflight before a long run. This is bounded by the cap you pass and normally costs well under $0.01:
+
+```bash
+uv run harness-clone doctor --live --max-usd 2    # expect "status": "live-pass"
+```
+
+Live doctor checks cover a tool round trip, structured JSON, streaming, and usage metadata. `executor_compaction` stays `unverified` by design. Doctor does not prove a full Pi edit.
+
+`--max-usd` is the shared ceiling for that run directory, recorded in `budget.sqlite`. The gateway reserves a conservative cost for each call, then settles actual token usage. It stops further paid work when usage is unknown or the cap is exhausted. Published token prices in the ledger are estimates; check current Fireworks rates before treating the cap as a billing guarantee. Actual provider charges can exceed the estimate and are recorded rather than discarded.
+
+With `FIREWORKS_API_KEY` in `.env`, a generic Propose–Probe–Compose run on the example task is:
+
+```bash
 uv run harness-clone run \
   --task examples/tasks/summary/task.json \
   --base-harness examples/base-harness \
   --run-dir runs/live-summary \
   --mode parallel --k 1 --profile research \
   --editor-policy pi --max-usd 2
+uv run harness-clone inspect --run-dir runs/live-summary
 ```
 
-The model is fixed to `accounts/fireworks/models/deepseek-v4p1-flash`. Every execution/editor/subagent/summary role uses it. The gateway meters calls against a shared SQLite ledger and stops further paid work if usage is unknown or the configured cap is exhausted. Published token prices are embedded as estimates; verify current rates before using the cost cap as a financial control. A reservation conservatively estimates the next request; actual provider billing may exceed estimates and is recorded rather than discarded.
-
-Live doctor checks cover a tool round trip, structured JSON, streaming, and usage metadata. Executor compaction/restart and complete Pi code-edit behavior require separate container-backed validation; doctor never declares those verified.
+`--editor-policy pi` is the default and is what performs code-bearing RSI edits. `--editor-policy text` still spends the key, but only on filesystem edits. The offline `demo` command ignores the key either way. The smallest OrderOps run that records INV, DOM, and COMPOSE stages is in the next section.
 
 ## OrderOps: test whether the harness improves
 
@@ -149,7 +174,8 @@ paths to regenerate; the command refuses existing destinations. Start with
 `--dev-count 6 --holdout-count 2` for a small operational smoke test; this is too
 small to support a quality claim.
 
-Build the images after source changes, export `FIREWORKS_API_KEY`, and choose a
+Build the images after source changes. `FIREWORKS_API_KEY` is read from `.env`,
+as described in [Run with a real API key](#run-with-a-real-api-key). Choose a
 spending cap. This command deliberately requires you to set `ORDEROPS_MAX_USD`:
 
 ```bash
@@ -168,7 +194,38 @@ The default arms are:
 | persistent | Pi refinement; carry selected bundles and earlier lessons forward | Freeze the final adopted bundle |
 | retries | Original harness, local-matched attempts with model selection | Original harness, one execution per case |
 
-Use `--arms frozen persistent` to run a subset. Defaults are Pi editing, k=1,
+To watch RSI on a real key without the full suite, generate one development case and one held-out case, then run only the arms that edit. A completed run of this size has landed around a third of a dollar; a two-development, one-held-out, four-arm pilot has landed around $0.75. Those are past observations, not a quote. Set the cap yourself. Cap exhaustion drops deliveries and fails the check below.
+
+```bash
+uv run harness-clone orderops generate \
+  --tasks-dir runs/rsi-demo/tasks --private-dir runs/rsi-demo/private \
+  --dev-count 1 --holdout-count 1 --seed 42
+uv run harness-clone orderops run \
+  --tasks-dir runs/rsi-demo/tasks --run-dir runs/rsi-demo/experiment \
+  --arms local persistent --editor-policy pi --k 1 --max-usd 2
+```
+
+`local` refines with Pi and resets the bundle on each case. `persistent` carries the selected bundle and earlier lessons forward. Held-out cases execute the frozen bundle once. Answers in `runs/rsi-demo/private` are not given to the editor.
+
+Read the edit stages, then check that each development case on both arms recorded INV, DOM, and COMPOSE as `accepted` or `keep_base`, and that the persistent arm stored a reflection:
+
+```bash
+sqlite3 runs/rsi-demo/experiment/run.sqlite \
+  "select json_extract(value,'$.label'), json_extract(value,'$.scope'),
+          json_extract(value,'$.status'), substr(json_extract(value,'$.rationale'),1,160)
+   from records where kind='edit' order by id;"
+uv run python -c 'from harness_clone.orderops.verification import verify_live_rsi; import json; print(json.dumps(verify_live_rsi("runs/rsi-demo/experiment"), indent=2))'
+```
+
+`keep_base` means Pi kept the parent after a real edit attempt. That passes the RSI check and does not by itself show a better harness. Published trees are under `runs/rsi-demo/experiment/bundles/<digest>/`. The same digest as the base harness means every stage was `keep_base`. Score that pilot offline with the same evaluator, writing the report outside the run directory:
+
+```bash
+uv run harness-clone orderops evaluate \
+  --run-dir runs/rsi-demo/experiment --answers runs/rsi-demo/private/answers.json \
+  --output runs/rsi-demo/scores.json
+```
+
+On the full 30/20 suite, use `--arms frozen persistent` to run a subset. Defaults are Pi editing, k=1,
 sequential refinement, and practical selection (baseline outputs are eligible).
 Retries match actual local execution counts (or scheduled 4 × k if local is omitted),
 not total dollars: refinement also spends on
@@ -269,7 +326,7 @@ The script exits nonzero on a failed check and stops its temporary API server.
 ```bash
 scripts/setup-and-test.sh --skip-setup  # reuse installed dependencies
 scripts/setup-and-test.sh --docker     # also build images and test isolation
-export FIREWORKS_API_KEY=...           # live mode only; shell environment
+# reads FIREWORKS_API_KEY from .env; live mode only
 scripts/setup-and-test.sh --live --max-usd 2
 ```
 
@@ -350,7 +407,7 @@ Work from the repository root. Steps 1–4 are free; steps 5–7 make paid Firew
 5. **Live preflight** — real Fireworks calls for tool use, streaming, and structured output; typically costs well under $0.01:
 
    ```bash
-   export FIREWORKS_API_KEY=...   # host environment only; never commit it
+   # reads FIREWORKS_API_KEY from .env; see "Run with a real API key"
    uv run harness-clone doctor --live --max-usd 2
    ```
 

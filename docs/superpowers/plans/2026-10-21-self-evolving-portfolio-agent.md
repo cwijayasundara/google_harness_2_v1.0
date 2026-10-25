@@ -4,7 +4,7 @@
 
 **Goal:** Build a daily, recommendations-only portfolio agent on the existing harness whose harness bundle evolves weekly against backtested, then forward-scored, recommendation outcomes.
 
-**Architecture:** A trusted host-side layer (eToro/market fetch, screening, snapshot building, offline scoring) writes frozen dated tasks and scores matured outcomes; neither it nor any credential ever enters a candidate bundle. The evolvable layer is a new portfolio harness bundle executed daily as-is and evolved weekly through the existing sequential `run_stream` with causal experience.
+**Architecture:** A trusted host-side layer (CSV portfolio load, market fetch, screening, snapshot building, offline scoring) writes frozen dated tasks and scores matured outcomes; neither it nor any credential ever enters a candidate bundle. The evolvable layer is a new portfolio harness bundle executed daily as-is and evolved weekly through the existing sequential `run_stream` with causal experience.
 
 **Tech Stack:** Python 3.12, pydantic strict records (existing `contracts.py`), httpx, yfinance (new dependency), CoinGecko free API, existing Deep Agents/Docker executor, Fireworks via the existing gateway, pytest + ruff.
 
@@ -14,7 +14,7 @@
 
 - Recommendations only: no order-placement code path may be introduced anywhere.
 - No leverage, derivatives, or shorting recommendations; max single-position target weight 20%; max 5 non-hold calls per day (spec §3.2).
-- eToro and market-data credentials live in the host environment only; never in a task source, bundle, run directory, container, or committed file (spec §4).
+- Portfolio files and market-data credentials live on the host only; never in a task source, bundle, run directory, container, or committed file (spec §4).
 - Portfolio snapshots live under `runs/` (already gitignored); never commit portfolio data (spec §4).
 - Offline scores never reach online stages; outcomes enter only later-dated tasks, enforced by date ordinal (spec §6, §7.3).
 - Controller, evaluator isolation, sandbox, gateway, and budget semantics are unchanged; the only additive core module beside `evaluate.py` is the portfolio scorer (spec §3.3).
@@ -24,7 +24,7 @@
 
 ## Review Focus
 
-- eToro payload missing a position field or changing shape: snapshot build aborts with a named error; a partial portfolio is never written (Task 2 test).
+- Portfolio payload missing a position field or changing shape: snapshot build aborts with a named error; a partial portfolio is never written (Task 2 test).
 - Market data missing or stale for a held ticker: the snapshot records it as missing and the report must say so; no price is ever fabricated (Task 3 test).
 - Recommendation naming a ticker outside holdings ∪ candidates: the deterministic validator rejects the artifact (Task 5 test).
 - An outcome maturing on or after a task's date appearing in that task: impossible by construction — `outcomes_for` filters `maturity_date < task_date` (Task 6 test).
@@ -66,43 +66,43 @@ git add <implicated files> IMPLEMENTATION_STATUS.md
 git commit -m "fix: <defect> blocking complete live run"
 ```
 
-### Task 2: Portfolio contracts, eToro client, and CSV fallback
+### Task 2: Portfolio contracts and CSV loader
 
 **Files:**
 - Modify: `src/harness_clone/contracts.py` (append the records below)
-- Create: `src/harness_clone/portfolio_etoro.py`
-- Test: `tests/test_portfolio_etoro.py`
-- Fixture: `tests/fixtures/etoro_pnl.json` (sanitized: invented tickers/amounts, real field shape confirmed against the live API response in Step 1)
+- Create: `src/harness_clone/portfolio_csv.py`
+- Test: `tests/test_portfolio_csv.py`
+- Fixture: `tests/fixtures/portfolio_pnl.json` (sanitized: invented tickers and amounts)
 
 **Interfaces:**
 - Produces: `PortfolioPosition(instrument: str, ticker: str, asset_class: Literal["equity","crypto","etf","cash"], units: float, open_rate: float, current_price: float, unrealized_pnl_pct: float, portfolio_weight: float)`, `PortfolioSnapshot(fetched_at: str, currency: str, cash_weight: float, positions: list[PortfolioPosition])` in `contracts.py`.
-- Produces: `EtoroClient(api_key: str, get: Callable[[str, dict[str,str]], dict])` with `fetch_portfolio() -> PortfolioSnapshot`; `normalize_etoro_pnl(payload: dict, fetched_at: str) -> PortfolioSnapshot`; `load_portfolio_csv(path: Path, fetched_at: str) -> PortfolioSnapshot`. The client reads the key from `os.environ["ETORO_API_KEY"]` at CLI construction time, never at import.
+- Produces: `normalize_portfolio(payload: dict, fetched_at: str) -> PortfolioSnapshot`; `load_portfolio_csv(path: Path, fetched_at: str) -> PortfolioSnapshot`.
 
-- [ ] **Step 1: Confirm the live payload shape**
+- [ ] **Step 1: Write the fixture**
 
-With the user's key in the host environment, call the portfolio PnL endpoint once from a throwaway script under `/tmp`, save only a sanitized copy (tickers/amounts replaced) as the fixture. If the account lacks API access, record that and build the fixture from the API's documented shape; the CSV path becomes v1 (spec §10).
+Save a sanitized holdings payload (invented tickers and amounts) as `tests/fixtures/portfolio_pnl.json`, matching the CSV schema.
 
 - [ ] **Step 2: Write the failing tests**
 
 ```python
 def test_normalize_computes_weights_and_cash():
-    snap = normalize_etoro_pnl(load_fixture(), "2026-10-21T08:00:00Z")
+    snap = normalize_portfolio(load_fixture(), "2026-10-21T08:00:00Z")
     assert snap.positions[0].portfolio_weight == pytest.approx(0.6, abs=0.01)
     assert snap.cash_weight == pytest.approx(0.4, abs=0.01)
 
 def test_normalize_missing_units_aborts():
     payload = load_fixture(); del payload["positions"][0]["units"]
     with pytest.raises(ValueError, match="units"):
-        normalize_etoro_pnl(payload, "2026-10-21T08:00:00Z")
+        normalize_portfolio(payload, "2026-10-21T08:00:00Z")
 
-def test_csv_matches_api_schema(tmp_path):
+def test_csv_matches_fixture_schema(tmp_path):
     snap = load_portfolio_csv(write_csv(tmp_path), "2026-10-21T08:00:00Z")
-    assert snap.model_dump() == normalize_etoro_pnl(load_fixture(), "2026-10-21T08:00:00Z").model_dump()
+    assert snap.model_dump() == normalize_portfolio(load_fixture(), "2026-10-21T08:00:00Z").model_dump()
 ```
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `uv run pytest tests/test_portfolio_etoro.py -q` — expected: import/collection failure.
+Run: `uv run pytest tests/test_portfolio_csv.py -q` — expected: import/collection failure.
 
 - [ ] **Step 4: Implement**
 
@@ -110,10 +110,10 @@ Add the two records to `contracts.py`; implement normalization (weight = positio
 
 - [ ] **Step 5: Run tests; commit**
 
-Run: `uv run pytest tests/test_portfolio_etoro.py -q`
+Run: `uv run pytest tests/test_portfolio_csv.py -q`
 ```bash
-git add src/harness_clone/contracts.py src/harness_clone/portfolio_etoro.py tests/test_portfolio_etoro.py tests/fixtures/etoro_pnl.json
-git commit -m "feat: add eToro portfolio client with CSV fallback"
+git add src/harness_clone/contracts.py src/harness_clone/portfolio_csv.py tests/test_portfolio_csv.py tests/fixtures/portfolio_pnl.json
+git commit -m "feat: add portfolio CSV loader"
 ```
 
 ### Task 3: Market data providers and pure summary/screening math
@@ -404,7 +404,7 @@ Run: `HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q` — expected: existing t
 
 - [ ] **Step 4: Document operations in `README.md`**
 
-Cover: key setup (`ETORO_API_KEY`, `FIREWORKS_API_KEY`, host env only), `portfolio fetch/daily/evolve/score` examples with explicit `--max-usd`, the recommendations-only boundary, snapshot privacy (`runs/` gitignored), the 4-week forward soak (spec milestone 5) as an operational phase — not code — and the unverified-until-run status of live portfolio runs.
+Cover: key setup (`FIREWORKS_API_KEY` in `.env`), `portfolio fetch/daily/evolve/score` examples with explicit `--max-usd` and `--csv` for fetch, the recommendations-only boundary, snapshot privacy (`runs/` gitignored), the 4-week forward soak (spec milestone 5) as an operational phase — not code — and the unverified-until-run status of live portfolio runs.
 
 - [ ] **Step 5: Commit**
 

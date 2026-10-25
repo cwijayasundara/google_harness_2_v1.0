@@ -121,7 +121,7 @@ export interface Status {
   demo: boolean;
   adopted_bundle: string | null;
   docker: boolean;
-  keys: { fireworks: boolean; etoro: boolean };
+  keys: { fireworks: boolean };
   max_ui_usd: string;
   job_running: string | null;
 }

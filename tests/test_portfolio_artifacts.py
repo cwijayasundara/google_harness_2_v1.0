@@ -188,7 +188,7 @@ def test_bundle_subagents_and_skills():
 # --- portfolio_math (loaded by path from the bundle) ---
 def test_weights_sums_to_one_on_task2_fixture():
     math = load_math()
-    fixture = json.loads((ROOT / "tests/fixtures/etoro_pnl.json").read_text())
+    fixture = json.loads((ROOT / "tests/fixtures/portfolio_pnl.json").read_text())
     w = math.weights(fixture["positions"])
     assert w == pytest.approx({"ACME": 1.0})
     assert sum(w.values()) == pytest.approx(1.0)

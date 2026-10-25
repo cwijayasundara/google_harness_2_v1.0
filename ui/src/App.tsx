@@ -95,7 +95,6 @@ export function App() {
           <>
             <StatusChip ok={status.docker} label="Docker" />
             <StatusChip ok={status.keys.fireworks} label="Fireworks key" />
-            <StatusChip ok={status.keys.etoro} label="eToro key" />
             <span className="chip mono" title={status.adopted_bundle ?? "No adopted bundle yet"}>
               bundle {status.adopted_bundle ? status.adopted_bundle.slice(0, 8) : "—"}
             </span>

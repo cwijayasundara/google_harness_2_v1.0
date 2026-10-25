@@ -11,7 +11,8 @@ from pathlib import Path
 
 from .contracts import PI_IMAGE, ExperimentConfig, SelectionRecord, TaskResult, TaskSpec
 from .demo import default_bundle, run_demo, summarize
-from .portfolio_etoro import EtoroClient, load_portfolio_csv
+from .envfile import load_env_file
+from .portfolio_csv import load_portfolio_csv
 from .portfolio_ops import (
     coverage_warnings,
     ensure_adopted,
@@ -147,30 +148,11 @@ def _parse_day(value) -> date:
         raise ValueError(f"invalid --date {value!r}: expected YYYY-MM-DD") from exc
 
 
-def _etoro_get(url: str, headers: dict) -> dict:
-    import httpx
-
-    path = url.split("?", 1)[0]
-    try:
-        response = httpx.get(url, headers=headers, timeout=30.0)
-    except httpx.HTTPError as exc:
-        raise OSError(f"eToro API unreachable at {path}: {type(exc).__name__}") from None
-    if response.status_code in (401, 403):
-        raise ValueError(
-            f"eToro API rejected the keys ({response.status_code}) at {path}; check "
-            "ETORO_API_KEY / ETORO_USER_KEY, their Read permission, and ETORO_ENVIRONMENT"
-        )
-    if response.status_code >= 400:
-        # Never echo headers: they carry the keys.
-        raise ValueError(f"eToro API returned {response.status_code} at {path}")
-    return response.json()
-
-
 def _portfolio_source(args):
-    if args.csv is not None:
-        fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        return load_portfolio_csv(args.csv, fetched_at)
-    return EtoroClient.from_env(_etoro_get).fetch_portfolio()
+    if args.csv is None:
+        raise ValueError("portfolio fetch requires --csv")
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return load_portfolio_csv(args.csv, fetched_at)
 
 
 def _fetch_or_load_task(args, base_dir: Path, day: date) -> TaskSpec:
@@ -423,6 +405,7 @@ def parser():
 
 
 def main(argv=None):
+    load_env_file()
     args = parser().parse_args(argv)
     try:
         if args.command == "doctor":

@@ -69,26 +69,47 @@ Use upstream as a reference and selectively reuse compatible adapter/validation 
 
 ## Proposed architecture
 
-```mermaid
-flowchart TD
-    T[Task and pinned experiment configuration] --> C[Python LangGraph controller]
-    L[Per-domain experience snapshot] --> C
-    C --> B[Deep Agents reference executions]
-    B --> E[Sanitized evidence snapshot]
-    E --> I[INV editor]
-    E --> D[DOM editor]
-    I --> V[Validate and compile candidate bundles]
-    D --> V
-    P[Pi Durable editing worker] --> V
-    I -. code edits .-> P
-    D -. code edits .-> P
-    V --> R[Deep Agents candidate probes]
-    R --> M[Compose from execution contrasts]
-    M --> F[Deep Agents composed execution]
-    F --> S[Select existing output]
-    S --> X[Reflect and append experience]
-    X --> L
-    S --> J[Separate offline evaluator]
+```text
+Task and pinned experiment configuration
+          |
+          v
+Per-domain experience snapshot --> Python LangGraph controller
+                                          |
+                                          v
+                          Deep Agents reference executions
+                                          |
+                                          v
+                          Sanitized evidence snapshot
+                                 /                 \
+                                v                   v
+                          INV editor            DOM editor
+                                \                   /
+                                 \  code edits     /
+                                  \      |        /
+                                   v     v       v
+                          Pi Durable editing worker
+                                          |
+                                          v
+                          Validate and compile candidate bundles
+                                          |
+                                          v
+                          Deep Agents candidate probes
+                                          |
+                                          v
+                          Compose from execution contrasts
+                                          |
+                                          v
+                          Deep Agents composed execution
+                                          |
+                                          v
+                          Select existing output
+                                /                 \
+                               v                   v
+                 Reflect and append          Separate offline
+                 experience                  evaluator
+                        |
+                        +--> per-domain experience snapshot
+                             (next task)
 ```
 
 The controller owns experiment state, budgets, stage transitions, and adoption. Deep Agents owns tool-using task execution. Pi owns only the durable editing job assigned to it. The evaluator reads completed artifacts through a separate process and storage namespace; its scores do not flow into the online refinement graph.

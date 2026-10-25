@@ -2,6 +2,9 @@
 # One entry point for dependency setup, app checks, and harness RSI verification.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
+source scripts/load-dotenv.sh
+load_dotenv
 
 usage() {
   cat <<'HELP'
@@ -13,7 +16,7 @@ Usage: scripts/setup-and-test.sh [options]
   -h, --help             Show this help
 
 Requires uv, Python 3.12 (managed by uv), Node >=22.19, and npm.
-Live mode also requires Docker and FIREWORKS_API_KEY exported in your shell.
+Live mode also requires Docker and FIREWORKS_API_KEY in the shell or in .env.
 N is the total experiment cap; the script makes no separate paid doctor call.
 Logs and artifacts are saved in a fresh runs/setup-test.XXXXXX directory.
 The live pilot uses 2 development cases, 1 held-out case, and all four arms.
@@ -37,7 +40,7 @@ done
 if [ "$LIVE" = 1 ]; then
   [[ "$MAX_USD" =~ ^[0-9]+([.][0-9]+)?$ ]] && [ -n "${MAX_USD//[0.]/}" ] ||
     die "--live requires --max-usd with a positive finite decimal amount"
-  [ -n "${FIREWORKS_API_KEY:-}" ] || die "export FIREWORKS_API_KEY before using --live"
+  [ -n "${FIREWORKS_API_KEY:-}" ] || die "set FIREWORKS_API_KEY in the shell or in .env before using --live"
 elif [ -n "$MAX_USD" ]; then
   die "--max-usd requires --live"
 fi
