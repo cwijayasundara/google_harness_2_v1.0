@@ -141,7 +141,7 @@ def test_context_bound_uses_tokens_and_edit_stages_can_finish_a_tool_call(tmp_pa
         },
         token="token",
     )
-    assert accepted["max_tokens"] == 4096
+    assert accepted["max_tokens"] == 16384
     gateway.finish(identity, {"usage": {"prompt_tokens": 10, "completion_tokens": 1}})
     monkeypatch.setenv("HARNESS_MAX_OUTPUT_TOKENS", "16384")
     editor = InferenceGateway(

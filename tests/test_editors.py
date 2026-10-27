@@ -1,5 +1,7 @@
 """Exercise the real agent graph with deterministic provider responses."""
 
+from pathlib import Path
+
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -160,3 +162,32 @@ def test_reflection_repairs_refs_that_are_not_evidence_ids(tmp_path, monkeypatch
     draft = editor.reflect(evidence, result)
     assert draft.evidence_refs == [valid]
     assert len(model.seen) == 2
+
+
+def test_text_edit_context_lists_exact_citeable_refs(tmp_path, monkeypatch):
+    from harness_clone.contracts import EvidenceSnapshot, ExecutionRecord
+
+    editor, _ = editor_with_model(tmp_path, monkeypatch, [])
+    (tmp_path / "src").mkdir()
+    editor.task = editor.task.model_copy(update={"source_root": tmp_path / "src"})
+    digest = editor.store.publish_bundle(Path(__file__).parents[1] / "examples" / "base-harness")
+    record = ExecutionRecord(
+        execution_id="t/base1",
+        task_id="t",
+        bundle_digest=digest,
+        status="completed",
+        delivered=True,
+        trace=[{"id": "0", "type": "human", "content": "go"}],
+        artifacts={"answer.json": "{}"},
+    )
+    evidence = EvidenceSnapshot(digest="d", task_id="t", records=[record])
+    seen = {}
+
+    def capture(role, context, schema):
+        seen.update(context)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(editor, "_run", capture)
+    with pytest.raises(RuntimeError):
+        editor.propose("INV", digest, evidence)
+    assert seen["valid_evidence_refs"] == ["t/base1:trace:0", "t/base1:artifact:answer.json"]

@@ -41,3 +41,29 @@ def test_gateway_reports_controlled_policy_errors_without_echoing_values(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_gateway_explains_unknown_usage_block(tmp_path, monkeypatch):
+    from harness_clone.contracts import Usage
+
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-not-a-key")
+    db = tmp_path / "budget.sqlite"
+    ledger = BudgetLedger(db, Decimal("1"))
+    ledger.allocate("old/stage", Decimal("0.25"))
+    ledger.reserve("old/stage/req", Decimal("0.01"), allocation_id="old/stage")
+    ledger.settle("old/stage/req", Usage(known=False))
+    server = gateway_server(ExperimentConfig(max_usd="1"), db, "scoped-token", stage_id="new/stage")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = httpx.post(
+            f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
+            headers={"Authorization": "Bearer scoped-token"},
+            json={"model": MODEL, "messages": []}, timeout=5, trust_env=False,
+        )
+        assert response.status_code == 400
+        assert "unknown provider usage blocks further paid work" in response.json()["error"]["message"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

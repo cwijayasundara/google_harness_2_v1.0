@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 import uuid
 
 import httpx
@@ -36,8 +37,17 @@ http.createServer(async (req, res) => {
                "--read-only", "--cap-drop=ALL", "--user=65532:65532",
                "harness-clone-pi:0.1", "node", "-e", code)
         with httpx.Client(transport=DockerHTTPTransport(name), timeout=5) as client:
-            response = client.post("http://pi/jobs", json={"request_id": "stable"},
-                                   headers={"Authorization": "Bearer scoped-token"})
+            # `docker run -d` returns before node binds :8081; retry like PiEditor does.
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    response = client.post("http://pi/jobs", json={"request_id": "stable"},
+                                           headers={"Authorization": "Bearer scoped-token"})
+                    break
+                except httpx.TransportError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.2)
             assert response.status_code == 200
             assert response.json() == {
                 "method": "POST", "path": "/jobs", "body": {"request_id": "stable"},

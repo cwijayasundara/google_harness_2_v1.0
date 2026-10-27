@@ -1,0 +1,8 @@
+answer.json must be a JSON object with exactly these keys:
+  "total_cents": integer, in USD cents, after applying the house rules
+  "rows": integer, number of rows that were counted
+  "latest_date": "YYYY-MM-DD" of the latest counted row
+
+House rule B: rows with status HOLD count at half value, rounded half-up per row.
+Amounts use a decimal comma inside quotes, e.g. "12,50".
+Rule A also applies here: rows with status TEST are never counted.

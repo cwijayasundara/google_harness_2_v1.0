@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness run monitor</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#6a737d; --card:#f6f8fa; --line:#d8dee4;
+          --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --accent:#0969da; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#8b949e; --card:#161b22; --line:#30363d;
+            --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+         font:14px/1.45 -apple-system, system-ui, sans-serif; max-width:1100px; margin-inline:auto; }
+  h1 { font-size:18px; margin:0 0 4px; } h2 { font-size:14px; margin:24px 0 8px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .muted { color:var(--muted); } .row { display:flex; flex-wrap:wrap; gap:8px; }
+  .pill { padding:2px 10px; border-radius:99px; border:1px solid var(--line); background:var(--card); font-size:12px; }
+  .pill.done { color:var(--ok); border-color:var(--ok); } .pill.pending { color:var(--muted); }
+  .pill.live { color:var(--accent); border-color:var(--accent); animation:pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity:.4; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .card summary { cursor:pointer; font-weight:600; }
+  .bad { color:var(--bad); } .ok { color:var(--ok); } .warn { color:var(--warn); }
+  pre { white-space:pre-wrap; word-break:break-word; margin:6px 0; font:12px/1.4 ui-monospace, Menlo, monospace; }
+  .msg { border-left:3px solid var(--line); padding-left:8px; margin:6px 0; }
+  .msg.ai { border-color:var(--accent); } .msg.tool { border-color:var(--muted); }
+  .bar { height:8px; border-radius:4px; background:var(--line); overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--accent); }
+</style>
+</head>
+<body>
+<h1>Harness run monitor</h1>
+<div id="head" class="muted">loading…</div>
+<div id="alerts"></div>
+<div class="bar" style="margin:8px 0"><i id="spend" style="width:0"></i></div>
+<div id="spendtext" class="muted"></div>
+
+<h2>Pipeline</h2><div id="pipeline" class="row"></div>
+<h2>Executions (agent runs inside the container)</h2><div id="executions"></div>
+<h2>Editor decisions</h2><div id="edits"></div>
+<h2>Editor model replies</h2><div id="responses"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const openState = new Set();
+function track(root) {
+  root.querySelectorAll("details").forEach(d => {
+    d.open = openState.has(d.dataset.k);
+    d.addEventListener("toggle", () => d.open ? openState.add(d.dataset.k) : openState.delete(d.dataset.k));
+  });
+}
+function render(s) {
+  const age = s.last_write ? Math.max(0, Math.round(s.now - s.last_write)) : null;
+  const state = s.finished ? "finished" : age !== null && age < 120 ? "active" : "idle / stopped";
+  const c = s.config;
+  $("head").innerHTML = `<b>${esc(s.run_dir)}</b> · ${esc(c.mode)} k=${esc(c.k)} · ${esc(c.profile)} · editor=${esc(c.editor_policy)} · ` +
+    `<span class="${s.finished ? "ok" : age !== null && age < 120 ? "warn" : "bad"}">${state}</span>` +
+    (age !== null ? ` · last write ${age}s ago` : "") +
+    `<br><span class="muted">Records are written when a stage completes, so a long stage shows as pending until it ends.</span>`;
+  $("alerts").innerHTML =
+    (s.unknown_usage ? `<div class="card bad"><b>Unknown billing recorded.</b> A request was interrupted or failed before its usage was known (e.g. Ctrl-C mid-call). The budget ledger blocks all further paid work in this run directory; start a fresh <code>--run-dir</code>.</div>` : "") +
+    s.gateway_errors.map(g => `<div class="card bad"><b>Gateway refused</b> ${esc(g.stage)}<pre>${esc(g.reason)}</pre></div>`).join("");
+  const cap = parseFloat(s.budget.cap) || 0;
+  $("spend").style.width = cap ? Math.min(100, s.budget.spent_usd / cap * 100) + "%" : "0";
+  $("spendtext").textContent = `spent $${s.budget.spent_usd.toFixed(4)} of $${cap || "?"} cap`;
+
+  const firstPending = s.pipeline.findIndex(p => p.state === "pending");
+  $("pipeline").innerHTML = s.pipeline.map((p, i) =>
+    `<span class="pill ${p.state === "done" ? "done" : i === firstPending && !s.finished ? "live" : "pending"}">${esc(p.label)}</span>`).join("") || '<span class="muted">no stages planned yet</span>';
+
+  $("executions").innerHTML = s.executions.map(e => `
+    <div class="card"><details data-k="x-${esc(e.label)}"><summary>${esc(e.label)} —
+      <span class="${e.delivered ? "ok" : "bad"}">${e.delivered ? "delivered" : "not delivered"}</span> (${esc(e.status)})</summary>
+      ${e.error ? `<pre class="bad">${esc(e.error)}</pre>` : ""}
+      ${Object.entries(e.artifacts).map(([k, v]) => `<div><b>${esc(k)}</b><pre>${esc(v)}</pre></div>`).join("")}
+      ${e.trace.map(m => `<div class="msg ${esc(m.type)}"><span class="muted">${esc(m.type)}</span>
+        ${m.content ? `<pre>${esc(m.content)}</pre>` : ""}
+        ${m.tool_calls.map(t => `<pre>→ ${esc(t.name)}(${esc(t.args)})</pre>`).join("")}</div>`).join("")}
+    </details></div>`).join("") || '<div class="muted">none yet</div>';
+
+  $("edits").innerHTML = s.edits.map(e => `
+    <div class="card"><b>${esc(e.label)}</b> (${esc(e.scope)}) —
+      <span class="${e.status === "accepted" ? "ok" : e.status === "fallback" ? "bad" : "warn"}">${esc(e.status)}</span>
+      after ${esc(e.attempts)} attempt(s)
+      ${e.error ? `<pre class="bad">${esc(e.error)}</pre>` : ""}
+      ${e.rationale ? `<pre>${esc(e.rationale)}</pre>` : ""}</div>`).join("") || '<div class="muted">none yet</div>';
+
+  $("responses").innerHTML = s.editor_responses.map(r => `
+    <div class="card"><details data-k="r-${esc(r.id)}"><summary>${esc(r.id.split("/").slice(-3).join("/"))} —
+      <span class="${r.finish_reason === "length" ? "bad" : ""}">${esc(r.finish_reason)}</span>
+      <span class="muted">(${esc(r.tokens.prompt)} in / ${esc(r.tokens.completion)} out)</span></summary>
+      ${r.reasoning ? `<div class="muted">reasoning</div><pre>${esc(r.reasoning)}</pre>` : ""}
+      ${r.content ? `<div class="muted">reply</div><pre>${esc(r.content)}</pre>` : ""}
+      ${r.tool_calls.map(t => `<pre>→ ${esc(t.name)}(${esc(t.args)})</pre>`).join("")}
+    </details></div>`).join("") || '<div class="muted">none yet</div>';
+  ["executions", "responses"].forEach(id => track($(id)));
+}
+async function tick() {
+  try { render(await (await fetch("/api/snapshot")).json()); }
+  catch (e) { $("head").textContent = "monitor server unreachable (run finished and exited?)"; }
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+answer.json must be a JSON object with exactly these keys:
+  "total_cents": integer, in USD cents, after applying the house rules
+  "rows": integer, number of rows that were counted
+  "latest_date": "YYYY-MM-DD" of the latest counted row
+
+House rule D: vendor Globex writes dates as DD/MM/YYYY. Report latest_date in ISO form.
+Rules A, B and C still apply.

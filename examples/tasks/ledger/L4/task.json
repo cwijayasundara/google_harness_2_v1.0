@@ -1,0 +1,1 @@
+{"id": "L4", "domain": "ledger-summary", "prompt": "Summarize the ledger into answer.json.", "source_root": "source", "output_paths": ["answer.json"], "ordinal": 3}

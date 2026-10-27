@@ -11,12 +11,13 @@ from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_fireworks.chat_models import FireworksInvalidRequestError
 from pydantic import Field
 
 from .bundles import read_files
 from .contracts import EditProposal, ExperimentConfig, Record, TaskSpec
 from .evidence import citeable_refs, read_sources, validate_refs
-from .gateway import gateway_server, stage_group
+from .gateway import EDIT_OUTPUT_TOKENS, gateway_server, stage_group
 from .providers import make_model
 from .storage import BudgetLedger, RunStore, fingerprint
 
@@ -64,7 +65,13 @@ class DeepAgentEditor:
                 (root / "context.json").write_text(json.dumps(context, default=str))
                 backend = FilesystemBackend(root_dir=root, virtual_mode=True)
                 model = make_model(
-                    self.config,
+                    self.config.model_copy(
+                        update={
+                            "max_output_tokens": max(
+                                self.config.max_output_tokens, EDIT_OUTPUT_TOKENS
+                            )
+                        }
+                    ),
                     role,
                     gateway_url=f"http://127.0.0.1:{server.server_port}/v1",
                     gateway_token=token,
@@ -86,11 +93,23 @@ class DeepAgentEditor:
                 # ToolStrategy can terminate without a structured response when
                 # the model returns plain text or exhausts its output tokens.
                 # Continue once with the same context, gateway and spending cap.
+                initial = messages
                 for attempt in range(2):
-                    value = agent.invoke(
-                        {"messages": messages},
-                        {"recursion_limit": self.config.max_tool_calls * 3 + 10},
-                    )
+                    try:
+                        value = agent.invoke(
+                            {"messages": messages},
+                            {"recursion_limit": self.config.max_tool_calls * 3 + 10},
+                        )
+                    except FireworksInvalidRequestError as exc:
+                        # Carrying the first attempt's reads can overflow the
+                        # context window; restart once from the bare prompt.
+                        if messages is initial:
+                            raise RuntimeError(f"{role} request rejected: {exc}") from exc
+                        messages = initial
+                        value = agent.invoke(
+                            {"messages": messages},
+                            {"recursion_limit": self.config.max_tool_calls * 3 + 10},
+                        )
                     response = value.get("structured_response")
                     last = next(
                         (m for m in reversed(value["messages"]) if isinstance(m, AIMessage)),
@@ -163,6 +182,8 @@ class DeepAgentEditor:
                 "sources": read_sources(self.task),
                 "harnesses": harnesses,
                 "evidence": evidence.model_dump(mode="json"),
+                "valid_evidence_refs": citeable_refs(evidence),
+                "evidence_refs_rule": "evidence_refs must be copied exactly from valid_evidence_refs (execution_id:trace:N or execution_id:artifact:path). Descriptions of steps or files are not references.",
                 "library": library,
                 "decisions": self.decisions,
                 "previous_validation_error": self.error,

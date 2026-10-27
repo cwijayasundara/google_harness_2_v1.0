@@ -260,6 +260,50 @@ Legacy portfolio commands and UI code remain, and previously archived adopted
 bundles can still be used. A new portfolio daily/evolution run without an archived
 bundle reports the retirement. Test fixtures are not shipped as application seeds.
 
+## Ledger demo: watch the harness rewrite itself
+
+A small task family for demos. Four tasks (`L1`-`L4`) each carry a rule in their
+`NOTES.txt` (exact output keys, VOID rows and decimal commas, per-row currency
+rounding, DD/MM dates), and `H1` is a held-out file that restates none of them.
+Sequential mode carries each adopted harness into the next task, so the edit
+stages show which surfaces changed: guardrails, memory, skills and subagents
+(plus scripts and middleware with `--editor-policy pi`). Paid; the cap is yours.
+
+```bash
+# Free: write the tasks and the private answers (refuses to overwrite).
+uv run python scripts/make_ledger_family.py \
+  --tasks-dir examples/tasks/ledger --private-dir runs/ledger/private
+
+# Paid: run all five tasks. Use a fresh --run-dir for each new experiment.
+uv run harness-clone run \
+  --task examples/tasks/ledger/L1/task.json \
+  --task examples/tasks/ledger/L2/task.json \
+  --task examples/tasks/ledger/L3/task.json \
+  --task examples/tasks/ledger/L4/task.json \
+  --task examples/tasks/ledger/H1/task.json \
+  --base-harness examples/base-harness --run-dir runs/ledger/exp2 \
+  --mode sequential --k 1 --profile research --editor-policy text \
+  --max-usd 3 --watch
+```
+
+Expect roughly 3-4 minutes per task. For a shorter demo pass only `L1` and `L2`;
+Ctrl-C is safe, and repeating the same command resumes finished work. Then:
+
+```bash
+# Each stage should be "accepted" (or "keep_base"), not "fallback".
+sqlite3 runs/ledger/exp2/run.sqlite \
+  "select id, json_extract(value,'$.status') from records where kind='edit' order by rowid"
+
+# Which harness files changed, from the base bundle digest to the last one.
+diff -rq runs/ledger/exp2/bundles/<base-digest> runs/ledger/exp2/bundles/<final-digest>
+
+uv run harness-clone evaluate --run-dir runs/ledger/exp2 \
+  --expectations runs/ledger/private/expectations.json --output runs/ledger/scores2.json
+```
+
+The base harness currently passes every ledger task, so this demonstrates that
+the pipeline edits the harness, not that the edits improve scores.
+
 ## How refinement works
 
 Research mode runs k baseline executions, k general INV proposals and k practitioner DOM proposals, their probes, and k composed executions. Sequential mode uses one INV/DOM pair per round and carries the composed harness forward. Parallel mode creates all candidates from shared baseline evidence. The current controller dispatches independent stages serially; its parallel mode describes search width, not simultaneous execution. Cross-domain task streams can be processed concurrently through the Python API.

@@ -15,6 +15,9 @@ from .providers import normalize_usage
 from .storage import BudgetLedger
 
 
+EDIT_OUTPUT_TOKENS = 16384
+
+
 class GatewayPolicyError(ValueError):
     """A controlled rejection message that is safe to return to the caller."""
 
@@ -94,14 +97,22 @@ class InferenceGateway:
         ) / Decimal(1000000)
         identity = self.stage_id + "/" + str(uuid.uuid4())
         group = stage_group(self.stage_id)
-        self.ledger.allocate(group, self.config.stage_usd)
-        self.ledger.reserve(identity, ceiling, allocation_id=group)
+        try:
+            self.ledger.allocate(group, self.config.stage_usd)
+            self.ledger.reserve(identity, ceiling, allocation_id=group)
+        except ValueError as exc:
+            # Ledger refusals (cap, unknown usage) carry controlled messages; show them.
+            raise GatewayPolicyError(str(exc)) from exc
         return identity, payload
 
     def _output_limit(self) -> int:
         """Edit attempts may spend output on reasoning and still emit a tool call."""
+        if "/attempt-" not in self.stage_id:
+            return self.config.max_output_tokens
         raw = os.environ.get("HARNESS_MAX_OUTPUT_TOKENS")
-        if raw and "/attempt-" in self.stage_id:
+        if not raw:
+            return max(self.config.max_output_tokens, EDIT_OUTPUT_TOKENS)
+        if raw:
             try:
                 limit = int(raw)
             except ValueError:

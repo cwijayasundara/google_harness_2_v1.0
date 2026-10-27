@@ -369,9 +369,16 @@ def parser():
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--live", action="store_true")
     doctor.add_argument("--max-usd", default="0")
-    for name in ["demo", "run", "resume", "inspect", "evaluate"]:
+    for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
         cmd.add_argument("--run-dir", type=Path, required=True)
+        if name in {"run", "resume"}:
+            cmd.add_argument(
+                "--watch", action="store_true", help="open a live HTML view of this run"
+            )
+        if name == "watch":
+            cmd.add_argument("--port", type=int, default=0)
+            cmd.add_argument("--no-open", action="store_true")
         if name in {"demo", "run"}:
             cmd.add_argument("--mode", choices=["parallel", "sequential"], default="parallel")
             cmd.add_argument("--k", type=int, default=1)
@@ -408,6 +415,15 @@ def main(argv=None):
     load_env_file()
     args = parser().parse_args(argv)
     try:
+        if args.command == "watch":
+            from .monitor import serve_forever
+
+            serve_forever(args.run_dir, args.port, not args.no_open)
+            return 0
+        if getattr(args, "watch", False):
+            from .monitor import start_background
+
+            print(f"harness-clone: live view at {start_background(args.run_dir)}", file=sys.stderr)
         if args.command == "doctor":
             from .preflight import run_preflight
 

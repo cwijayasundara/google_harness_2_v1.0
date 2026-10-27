@@ -110,8 +110,8 @@ def test_gateway_stage_ceiling_is_cumulative_across_pending_requests(tmp_path):
 
 
 def test_gateway_stage_ceiling_shared_across_repair_attempts(tmp_path):
-    first = gateway(tmp_path, stage_id="task/x/inv1/attempt-0", stage_usd="0.01")
-    second = gateway(tmp_path, stage_id="task/x/inv1/attempt-1", stage_usd="0.01")
+    first = gateway(tmp_path, stage_id="task/x/inv1/attempt-0", stage_usd="0.03")
+    second = gateway(tmp_path, stage_id="task/x/inv1/attempt-1", stage_usd="0.03")
     first.prepare(payload(), token="tok")
     with pytest.raises(ValueError, match="stage"):
         second.prepare(payload(), token="tok")
