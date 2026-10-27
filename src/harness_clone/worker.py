@@ -28,7 +28,20 @@ def main():
             if time.monotonic() > deadline:
                 raise RuntimeError("inference gateway did not become ready")
             time.sleep(0.2)
-    backend = LocalShellBackend(
+    from deepagents.backends.protocol import GrepResult
+
+    class BoundedBackend(LocalShellBackend):
+        # The Python grep fallback reads whole files into this process, so a
+        # search rooted at / (proc, sys, site-packages) exhausts container memory.
+        def grep(self, pattern, path=None, *args, **kwargs):
+            if not path or os.path.normpath(path) == "/":
+                return GrepResult(
+                    error="grep path must be a directory such as /source, /workspace or /output",
+                    matches=[],
+                )
+            return super().grep(pattern, path, *args, **kwargs)
+
+    backend = BoundedBackend(
         root_dir="/workspace",
         virtual_mode=False,
         env={"PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"},
