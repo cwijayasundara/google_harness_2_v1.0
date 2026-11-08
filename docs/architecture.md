@@ -19,6 +19,9 @@ Host process
 |                            v            v              v              |
 |                     Experience     run.sqlite     budget.sqlite       |
 |                     library        + bundles                          |
+|                            ^  audit -> consolidate -> wiki            |
+|                            |  (offline, no model calls, no spend)     |
+|                     dreaming.py                                       |
 +----------------------------|---------------|--------------------------+
                              |               |
               execute bundle |               | code-bearing proposal
@@ -108,6 +111,141 @@ The host process reads `FIREWORKS_API_KEY` from the shell or from `.env` in the 
 Parallel mode widens search from one parent (`k` INV, `k` DOM, `k` compositions). Sequential mode carries the composed bundle forward for `k` rounds. Stage dispatch inside a task is serial. Resume reads completed executions, edits, and selections from `run.sqlite` and does not repeat them. A changed task stream, source snapshot, config, base digest, or image ID needs a new run directory.
 
 Invalid proposals get one repair attempt, then the parent is kept (`fallback`). `keep_base` is an explicit empty patch. Accepted patches are materialized, validated, and published by SHA-256 digest before anything executes them.
+
+## Memory: capture in session, dream offline
+
+Memory has two passes, after Anthropic's research (see References): an
+in-session capture — the hippocampus — and an offline pass, dreaming, that
+later verifies, corrects, and republishes what future tasks read. Reflect
+writes; the dream edits. Neither ever deletes: the run store is append-only.
+
+### Pass 1: reflect (in-session, during evolution)
+
+Only runs with `learn=True` (portfolio evolve, `run` with learning) reflect,
+and only after an adopted output exists:
+
+```text
+run_stream(learn=True), per task with a chosen execution
+          |
+          v
+build_evidence(task, executions, library)   frozen, ordinal-scoped snapshot
+          |
+          v
+editor.reflect(evidence, result)            one Deep Agents call
+          |   salience steer: state the rule, HOW it is verified,
+          |   warn about the trap; do not store re-derivable state
+          v
+validate_refs(draft.evidence_refs, evidence)   every ref must resolve
+          |
+          | rejected --> run.sqlite kind='reflection' as {"error": ...}
+          v accepted
+ExperienceEntry: cue / lesson / evidence_refs / confidence
+          |
+          v
+library.append()          bundle digest must already be published
+          |
+          v
+run.sqlite kind='experience'            append-only, causal
+          |
+          v
+snapshot(namespace, domain, ordinal)    earlier ordinals only,
+          .                             served to the next task's editors
+          .
+          v
+```
+
+### Pass 2: dream (offline, free)
+
+`harness-clone dream --run-dir <dir> [--base-dir <portfolio>] [--adopt]`, or
+`POST /api/dream` from the cockpit. No model calls, no spend, deterministic:
+
+```text
+     run store (run.sqlite)                    adopted bundle
+          |                                         |
+          v                                         |
++------------------------+                          |
+| 1. audit_library       | every evidence ref       |
+|    per-entry status:   | re-resolved against      |
+|  verified / intact /   | stored executions;       |
+|  broken-ref / stale /  | bundle digests checked   |
+|  duplicate / conflict/ | against the adopted      |
+|  secret / superseded   | digest                   |
++-----------+------------+                          |
+            |                                       |
+            v                                       |
++------------------------+                          |
+| 2. consolidate         | append-only restatements |
+|  duplicates  -> merge  | supersedes the originals |
+|  later correction      | (superseded entries stay |
+|  disagreement->CONFLICT| as audit stubs; dream    |
+|  verified single       | entries never restated)  |
++-----------+------------+                          |
+            |                                       |
+            v                                       v
++--------------------------------------------------+---------+
+| 3. build_memory_files                                     |
+|  memory/<domain>.md: current understanding + provenance   |
+|  memory/AGENTS.md: standing text kept, index regenerated  |
+|  file count capped by config retrieval_limit              |
++--------------------------------------------+---------------+
+                                             |
+                                             v
+4. HarnessPatch (memory files only) -> apply_patch -> publish digest
+                                             |
+                                --adopt -> archive + adopted.json
+```
+
+### The memory hierarchy
+
+The wiki is the small injected top layer the research describes; detail is
+one link away, and full history stays in the store:
+
+```text
+ injected at startup, bounded by retrieval_limit
+ +------------------------------------------------------+
+ | memory/AGENTS.md                                     |
+ |   hand-written standing text (never regenerated)     |
+ |   + dream index block: [[portfolio]] -> file         |
+ +----------------------------|-------------------------+
+                              | one link away
+ +----------------------------v-------------------------+
+ | memory/portfolio.md                                  |
+ |   plain statements of current understanding, with    |
+ |   provenance: cue, verified date or unverified,      |
+ |   task, bundle, "stale: adopted bundle is ..."       |
+ +----------------------------|-------------------------+
+                              | full history
+ +----------------------------v-------------------------+
+ | run.sqlite                                           |
+ |   every entry ever captured, superseded stubs        |
+ |   included; snapshots stop serving superseded keys   |
+ +------------------------------------------------------+
+```
+
+### Research-to-code mapping
+
+| Concept (Anthropic) | Here |
+|---|---|
+| Transcripts as ground truth | Execution records + traces in `run.sqlite` |
+| In-session salience tagging | `editor.reflect()` (Pass 1) |
+| Dream verifies memory against transcripts | `audit_library` re-resolving every ref |
+| "How it is known" / validated rules | `verified_on` date + `confidence="verified"` |
+| Later correction of a stale rule | Correction restatement keeps the newest lesson and notes what it replaced (source, date, bundle) |
+| Conflicts: keep both sides, never guess | One `CONFLICT` note quoting every side; snapshots serve the note, not either side |
+| Duplicates merged with stubs | Merge restatements supersede the group; store keeps the originals |
+| Wiki files + `_index.md` catalog | `memory/<domain>.md` + regenerated `AGENTS.md` index |
+| Small injected top layer | File count and size bounded by `retrieval_limit` |
+| Never copy secrets into memory | Credential-shape scan drops them from the wiki; store copies stay auditable |
+| Deterministic dreams that converge | Revisioned keys; dream entries are never restated; unchanged state republishes the same digest |
+| Failed nights retry, cadence is offline | The dream is free; run it after any evolve week, or never |
+| Adoption stays governed | Output is a candidate bundle; `--adopt` is explicit |
+
+Guarantees that fall out of the shape: the budget ledger is untouched, the
+dream can never edit graders, tasks, or controller code (it flows through
+bundle validation like anything else), and repeated dreams converge instead
+of rewriting memory forever. What is deferred: live distillation — model
+calls that extract missed process observations from full traces (see
+`docs/dreaming.md`, section 5).
 
 ## Editable bundle
 
@@ -232,7 +370,12 @@ The portfolio path is a second caller of the same loop, not a second optimizer.
 3. `portfolio evolve` runs a sequential stream over the week's snapshot tasks and archives the adopted digest.
 4. `portfolio score` grades past calls from later prices. It does not feed scores back into evolution.
 
-The UI (`ui/` plus `ui_server.py`) reads snapshots and the scoreboard, and starts those CLI commands as jobs. It does not embed the controller.
+The UI (`ui/` plus `ui_server.py`) reads snapshots and the scoreboard, and starts those CLI commands as jobs. It does not embed the controller. The same API also serves the memory layer:
+
+- `GET /api/memory` — the wiki the adopted bundle serves at startup.
+- `POST /api/dream` — runs the dream on the newest run store with experiences (or one you name); `"adopt": true` adopts the resulting wiki bundle. Deterministic and free, so it runs synchronously.
+
+The cockpit panel for this is `ui/src/components/MemoryPanel.tsx`. Demo data ships dream-ready: `scripts/seed_demo.py` seeds real evolve-week stores (published base-harness bundle, traced executions, experiences with duplicates, corrections, and a broken ref).
 
 ## Records on disk
 
@@ -240,11 +383,14 @@ A run directory is the unit of resume and of identity.
 
 | Path | Role |
 |---|---|
-| `run.sqlite` | Experiment config, tasks, executions, edits, selections, experience, OrderOps admission. |
+| `run.sqlite` | Experiment config, tasks, executions, edits, selections, reflections, experience entries, dream provenance, OrderOps admission. |
 | `budget.sqlite` | Reservations, settlements, unknown usage, phase allocations. |
-| `bundles/<digest>/` | Immutable published harness trees. |
+| `bundles/<digest>/` | Immutable published harness trees, including the memory wiki once a dream has been adopted. |
+| `adopted.json` (portfolio base dir) | Which archived digest daily/evolve runs and the cockpit start from. |
 | `inputs/` | OrderOps source snapshot copied at admission. |
 | `pi/<request>/` | Pi job context, candidate tree, and Durable session state. |
+
+Experience entries are never updated in place. A dream restatement is a new entry with `origin="dream"`, a bumped `revision`, `verified_on` when its evidence re-resolved, and `supersedes` naming the keys it replaces; snapshots stop serving superseded keys but the store keeps them.
 
 Offline `evaluate` compares delivered artifacts with an expectations file and refuses to write its report inside any persisted task source directory.
 
@@ -252,17 +398,43 @@ Offline `evaluate` compares delivered artifacts with an expectations file and re
 
 | Concern | Module |
 |---|---|
-| CLI | `src/harness_clone/cli.py`, `orderops/cli.py` |
+| CLI | `src/harness_clone/cli.py` (`demo`, `run`, `resume`, `inspect`, `evaluate`, `watch`, `doctor`, `dream`), `orderops/cli.py` |
 | Task graph | `controller.py` |
-| Cross-task lessons | `experience.py` |
+| Cross-task lessons: capture | `experience.py` (library, snapshots, `run_stream`) |
+| Cross-task lessons: dreaming | `dreaming.py` (audit, consolidate, wiki, publish) |
 | Bundle validation and publish | `bundles.py` |
 | Deep Agents compilation | `compiler.py`, `worker.py` |
 | Container rollout | `sandbox.py` |
-| Credential boundary and metering | `gateway.py`, `providers.py`, `storage.py` |
-| Pi editing | `pi_editor.py`, `pi_client.py`, `workers/pi/` |
+| Editors (text and Pi) | `editors.py`, `pi_editor.py`, `pi_client.py`, `workers/pi/` |
 | Evidence given to editors | `evidence.py` |
+| Credential boundary and metering | `gateway.py`, `providers.py`, `storage.py`, `envfile.py` |
+| Task sources and contracts | `tasks.py`, `contracts.py` |
 | OrderOps protocol | `orderops/experiment.py`, `cases.py`, `score.py` |
 | Generic offline grader | `evaluate.py` |
-| Scripted demo, no model | `demo.py` |
+| Portfolio subsystem | `portfolio_ops.py` (daily/evolve), `portfolio_snapshot.py`, `portfolio_csv.py`, `portfolio_market.py`, `portfolio_history.py`, `portfolio_score.py`, `portfolio_artifacts.py` |
+| Cockpit API and UI | `ui_server.py`, `ui/` (Vite + React), `monitor.py` (read-only HTML view) |
+| Scripted demo, no model | `demo.py`, `scripts/seed_demo.py`, `scripts/dream_demo.py` |
+| Capability checks | `preflight.py` |
 
-The original design note is `docs/harness2-deepagents-proposal.md`. The OrderOps protocol is `docs/superpowers/specs/2026-10-23-orderops-design.md`. This file describes the code those documents turned into.
+## Testing map
+
+| Layer | Tests |
+|---|---|
+| Dream (audit, consolidate, wiki, convergence) | `tests/test_dreaming.py` |
+| Cockpit API incl. `GET /api/memory`, `POST /api/dream` | `tests/test_ui_server.py` |
+| Bundle validation, patches, snapshots | `tests/test_bundles.py`, `tests/test_portfolio_cli.py` |
+| Offline demo and CLI flows | `tests/test_demo.py`, `tests/test_cli.py` |
+
+Full suite: `uv run pytest -q`; the dream demo needs no API key (`scripts/dream_demo.py`).
+
+## References
+
+Sources this code was built from:
+
+- Harness² (Google Research), https://github.com/google-research/harness2 — the original system cloned here at research scale.
+- `docs/harness2-deepagents-proposal.md` — the design note that became this codebase.
+- OrderOps protocol: `docs/superpowers/specs/2026-10-23-orderops-design.md`; the portfolio agent spec is `docs/superpowers/specs/2026-10-21-self-evolving-portfolio-agent-design.md`.
+- Anthropic, "The components of agent memory" (November 2026), https://www.anthropic.com/research/components-of-agent-memory — the two-pass memory model (in-session capture + offline dreaming), the wiki representation, the small injected top layer, and the wrong-note loop that motivated verifying memory against transcripts.
+- Anthropic, "Dreaming with a dynamic workflow" (Managed Agents cookbook), https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow — the analyzer/organizer workflow the deterministic dream mirrors: analyzers per transcript, one organizer pass, transcripts as data never instructions, convergence on repeat runs.
+- LangChain Deep Agents — the agent runtime `compiler.py` targets inside the executor container.
+- Pi Durable (`workers/pi`) — the isolated editing worker for code-bearing proposals.
