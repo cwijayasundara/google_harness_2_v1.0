@@ -20,7 +20,7 @@ class ExperienceLibrary:
             raise ValueError("experience requires a cue and supported lesson")
         if bundle_digest(self.store.bundle_path(entry.bundle_digest)) != entry.bundle_digest:
             raise ValueError("experience bundle digest mismatch")
-        key = fingerprint([entry.namespace, entry.domain, entry.ordinal, entry.task_id])
+        key = entry_key(entry)
         value = entry.model_dump(mode="json")
         with self.store.transaction() as db:
             row = db.execute(
@@ -49,8 +49,22 @@ class ExperienceLibrary:
         for entry in selected:
             if bundle_digest(self.store.bundle_path(entry.bundle_digest)) != entry.bundle_digest:
                 raise ValueError("experience bundle digest mismatch")
+        # A dream restatement (supersedes=[keys]) replaces the entries it
+        # corrects or merges; the superseded entries stay in the store as
+        # audit stubs but are no longer served to tasks.
+        superseded: set[str] = set()
+        for e in selected:
+            superseded.update(e.supersedes)
+        selected = [e for e in selected if entry_key(e) not in superseded]
         data = [e.model_dump(mode="json") for e in selected]
         return EvidenceSnapshot(digest=fingerprint(data), task_id="library", library=data)
+
+
+def entry_key(entry: ExperienceEntry) -> str:
+    """Stable identity of an entry, including its dream revision."""
+    return fingerprint(
+        [entry.namespace, entry.domain, entry.ordinal, entry.task_id, entry.revision]
+    )
 
 
 def stream_signature(tasks) -> str:

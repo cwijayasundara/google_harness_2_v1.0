@@ -10,12 +10,42 @@ import json
 import math
 import random
 import shutil
-import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from harness_clone.contracts import Candidate, MarketSummary, PortfolioPosition, PortfolioSnapshot
+from harness_clone.contracts import (
+    Candidate,
+    ExecutionRecord,
+    ExperienceEntry,
+    MarketSummary,
+    PortfolioPosition,
+    PortfolioSnapshot,
+)
+from harness_clone.experience import ExperienceLibrary
+from harness_clone.portfolio_ops import archive_bundle
 from harness_clone.portfolio_snapshot import build_snapshot_task
+from harness_clone.storage import RunStore
+
+# The demo evolve runs start from the real base harness, so the dream has a
+# genuine bundle to consolidate against.
+BUNDLE = Path(__file__).resolve().parents[1] / "examples" / "base-harness"
+
+# (cue, lesson, broken) per week: one duplicate pair, a later correction, a
+# broken reference, and a conflict — everything the dream distinguishes.
+WEEK_LESSONS = [
+    [
+        ("position-sizes", "Cap any single position at 20% target weight", False),
+        ("position-sizes", "Cap any single position at 20% target weight", False),
+        ("fill-times", "Submit limit orders before 13:30; the opening auction fills late", False),
+        ("sector-cap", "Keep combined crypto under 15%; correlation eats the diversification", False),
+    ],
+    [
+        ("position-sizes", "Cap positions at 12%; the weekly review tightened it", False),
+        ("fill-times", "Submit limit orders before 13:30; the opening auction fills late", False),
+        ("sector-cap", "Keep combined crypto under 25%; the 15% rule was too tight", False),
+        ("stale-claim", "Legacy import format is still accepted", True),
+    ],
+]
 
 HOLDINGS = [
     ("Apple Inc", "AAPL", "equity", 40, 172.0, 228.0),
@@ -191,19 +221,43 @@ def _report(day: date, recs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _evolve_run(base: Path, week: str, digest: str, executions: int, delivered: int) -> None:
-    run = base / "runs" / f"evolve-{week}"
-    run.mkdir(parents=True)
-    with sqlite3.connect(run / "run.sqlite") as conn:
-        conn.execute("create table records (kind text, id text, value text, primary key(kind,id))")
-        conn.execute(
-            "insert into records values ('stream','signature',?)", (json.dumps({"base": digest}),)
-        )
-        for i in range(executions):
-            conn.execute(
-                "insert into records values ('execution',?,?)",
-                (f"demo/{week}/{i}", json.dumps({"delivered": i < delivered})),
+def _evolve_run(base: Path, week: str, executions: int, delivered: int, lessons) -> str:
+    """A real run store: published bundle, traced executions, and the
+    experiences reflect would have captured — dream fodder for the UI."""
+    store = RunStore(base / "runs" / f"evolve-{week}")
+    digest = store.publish_bundle(BUNDLE)
+    store.put("stream", "signature", {"base": digest})
+    lib = ExperienceLibrary(store)
+    for i, (cue, lesson, broken) in enumerate(lessons):
+        exec_id = f"demo/{week}/{i}"
+        store.save_execution(
+            ExecutionRecord(
+                execution_id=exec_id,
+                task_id=f"t{i}",
+                bundle_digest=digest,
+                delivered=i < delivered,
+                trace=[{"id": "t0", "type": "tool_call", "content": f"acted on {cue}"}],
+                artifacts={"recommendations.json": "{}"},
             )
+        )
+        refs = (
+            ["ghost:trace:0"]
+            if broken
+            else [f"{exec_id}:trace:t0", f"{exec_id}:artifact:recommendations.json"]
+        )
+        lib.append(
+            ExperienceEntry(
+                namespace="demo",
+                domain="portfolio",
+                task_id=f"t{i}",
+                ordinal=i,
+                bundle_digest=digest,
+                cue=cue,
+                lesson=lesson,
+                evidence_refs=refs,
+            )
+        )
+    return digest
 
 
 def seed(base: Path, end: date, days: int = 8, seed_value: int = 7) -> Path:
@@ -284,13 +338,13 @@ def seed(base: Path, end: date, days: int = 8, seed_value: int = 7) -> Path:
             indent=2,
         )
     )
-    first, second = "a" * 64, "b" * 64
     weeks = sorted({f"{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}" for d in snapshot_days})
+    adopted = None
     for n, week in enumerate(weeks):
-        _evolve_run(base, week, first if n == 0 else second, executions=4, delivered=4 - n % 2)
-    (base / "bundles" / first).mkdir(parents=True)
-    (base / "bundles" / second).mkdir(parents=True)
-    (base / "adopted.json").write_text(json.dumps({"bundle_digest": second}, indent=2))
+        adopted = _evolve_run(base, week, executions=4, delivered=4 - n % 2, lessons=WEEK_LESSONS[n % 2])
+    store = RunStore(base / "runs" / f"evolve-{weeks[-1]}")
+    archive_bundle(base, store, adopted)
+    (base / "adopted.json").write_text(json.dumps({"bundle_digest": adopted}, indent=2))
     return base
 
 

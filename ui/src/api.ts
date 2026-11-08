@@ -148,6 +148,33 @@ export interface Job {
   result: Record<string, unknown> | null;
 }
 
+export interface MemoryWiki {
+  adopted_bundle: string | null;
+  files: Record<string, string>;
+}
+
+export interface DreamFinding {
+  key: string;
+  status: "verified" | "intact" | "broken-ref" | "duplicate" | "conflict" | "stale" | "secret" | "superseded";
+  detail: string;
+}
+
+export interface DreamReport {
+  audit: { entries: number; adopted_digest: string | null; findings: DreamFinding[] };
+  restated: number;
+  merged: number;
+  conflicts_marked: number;
+  wiki_files: string[];
+  parent_digest: string | null;
+  patch_digest: string | null;
+  adopted: boolean;
+}
+
+export interface DreamRequest {
+  run_dir?: string;
+  adopt?: boolean;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -176,6 +203,9 @@ export const api = {
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
   startJob: (body: JobRequest) =>
     request<Job>("/api/jobs", { method: "POST", body: JSON.stringify(body) }),
+  memory: () => request<MemoryWiki>("/api/memory"),
+  dream: (body: DreamRequest) =>
+    request<DreamReport>("/api/dream", { method: "POST", body: JSON.stringify(body) }),
 };
 
 /** Resolve an evidence ref such as `market.json:AAPL.return_30d_pct` against a snapshot. */

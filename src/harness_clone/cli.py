@@ -369,6 +369,22 @@ def parser():
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--live", action="store_true")
     doctor.add_argument("--max-usd", default="0")
+    dream = commands.add_parser(
+        "dream", help="Consolidate the experience library of a run offline (no model calls)"
+    )
+    dream.add_argument("--run-dir", type=Path, required=True)
+    dream.add_argument(
+        "--base-harness",
+        type=Path,
+        default=None,
+        help="bundle to patch when the run has no adopted bundle (default: examples/base-harness)",
+    )
+    dream.add_argument("--base-dir", type=Path, default=Path("runs/portfolio"))
+    dream.add_argument(
+        "--adopt",
+        action="store_true",
+        help="adopt the dream bundle into --base-dir after publishing it",
+    )
     for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
         cmd.add_argument("--run-dir", type=Path, required=True)
@@ -436,6 +452,25 @@ def main(argv=None):
             )
         elif args.command == "demo":
             report = run_demo(args.run_dir, args.mode, args.k)
+        elif args.command == "dream":
+            from .bundles import bundle_digest
+            from .dreaming import run_dream
+
+            store = RunStore(args.run_dir)
+            adopted = read_adopted(args.base_dir)
+            if adopted:
+                import_bundle(store, args.base_dir, adopted)
+                parent = Path(store.bundle_path(adopted))
+                adopted_digest = adopted
+            else:
+                parent = args.base_harness or default_bundle()
+                adopted_digest = bundle_digest(parent)
+            report = run_dream(
+                store,
+                parent,
+                adopted_digest=adopted_digest,
+                adopt_base_dir=args.base_dir if args.adopt else None,
+            ).model_dump(mode="json")
         elif args.command == "run":
             cap = _admit_live(args.max_usd)
             from .tasks import load_task

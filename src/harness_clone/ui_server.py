@@ -27,8 +27,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .dreaming import run_dream
 from .envfile import load_env_file
-from .portfolio_ops import read_adopted
+from .portfolio_ops import archived_bundle, import_bundle, read_adopted
+from .storage import RunStore
 
 DEFAULT_BASE_DIR = Path("runs/portfolio")
 DEFAULT_PORT = 8765
@@ -106,6 +108,32 @@ class JobRequest(BaseModel):
     max_usd: str | None = None
     confirm_paid: bool = False
     csv: str | None = Field(default=None, max_length=1_000_000)
+
+
+class DreamRequest(BaseModel):
+    run_dir: str | None = None
+    adopt: bool = False
+
+
+def _newest_experience_store(base_dir: Path) -> Path | None:
+    """Newest run store under ``base_dir/runs`` that holds experience entries."""
+    runs_root = base_dir / "runs"
+    if not runs_root.is_dir():
+        return None
+    best: tuple[float, Path] | None = None
+    for run in runs_root.iterdir():
+        db = run / "run.sqlite"
+        if not db.is_file():
+            continue
+        try:
+            count = sqlite3.connect(db).execute(
+                "SELECT COUNT(*) FROM records WHERE kind='experience'"
+            ).fetchone()[0]
+        except sqlite3.Error:
+            continue
+        if count and (best is None or db.stat().st_mtime > best[0]):
+            best = (db.stat().st_mtime, run)
+    return best[1] if best else None
 
 
 class JobManager:
@@ -288,6 +316,52 @@ def create_app(
             else [],
             "weeks": weeks,
         }
+
+    @app.get("/api/memory")
+    def memory():
+        """The memory wiki the currently adopted bundle serves at startup."""
+        adopted = read_adopted(base_dir)
+        files: dict[str, str] = {}
+        if adopted:
+            root = archived_bundle(base_dir, adopted) / "memory"
+            if root.is_dir():
+                files = {
+                    f"memory/{p.name}": p.read_text(encoding="utf-8")
+                    for p in sorted(root.glob("*.md"))
+                }
+        return {"adopted_bundle": adopted, "files": files}
+
+    @app.post("/api/dream")
+    def dream(request: DreamRequest):
+        """Run the offline dream (deterministic, no spend) and return its report."""
+        run_dir = Path(request.run_dir) if request.run_dir else _newest_experience_store(base_dir)
+        if run_dir is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no run store with experience entries under {base_dir}/runs; "
+                    "experiences are captured by evolve weeks (the demo ships some)"
+                ),
+            )
+        store = RunStore(run_dir)
+        adopted = read_adopted(base_dir)
+        if adopted:
+            import_bundle(store, base_dir, adopted)
+            parent = archived_bundle(base_dir, adopted)
+            adopted_digest: str | None = adopted
+        else:
+            from .bundles import bundle_digest
+            from .demo import default_bundle
+
+            parent = Path(default_bundle())
+            adopted_digest = bundle_digest(parent)
+        report = run_dream(
+            store,
+            parent,
+            adopted_digest=adopted_digest,
+            adopt_base_dir=base_dir if request.adopt else None,
+        )
+        return report.model_dump(mode="json")
 
     @app.get("/api/jobs")
     def list_jobs():

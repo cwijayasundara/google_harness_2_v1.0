@@ -3,6 +3,7 @@ import { api, type Evolution, type Scoreboard, type Snapshot, type SnapshotSumma
 import { CallCards } from "./components/CallCards";
 import { Insights } from "./components/Insights";
 import { MissionControl } from "./components/MissionControl";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { PortfolioMap } from "./components/PortfolioMap";
 import { Timeline } from "./components/Timeline";
 
@@ -147,6 +148,7 @@ export function App() {
             )}
             {snapshot && <PortfolioMap snapshot={snapshot} focus={focus} onFocus={setFocus} />}
             {snapshot && <Insights snapshot={snapshot} scoreboard={scoreboard} evolution={evolution} />}
+            <MemoryPanel onChanged={refresh} />
           </div>
           {snapshot && <CallCards snapshot={snapshot} focus={focus} onFocus={setFocus} />}
         </main>

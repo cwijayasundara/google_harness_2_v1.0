@@ -2,6 +2,7 @@ import json
 import sys
 import time
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -212,3 +213,73 @@ def test_seed_refuses_to_replace_a_real_directory(tmp_path):
 def test_server_refuses_non_loopback_host():
     with pytest.raises(SystemExit):
         main(["--host", "0.0.0.0"])
+
+
+def _seed_experience_store(base):
+    """A run store with one verified and one duplicate experience entry."""
+    from harness_clone.contracts import ExecutionRecord, ExperienceEntry
+    from harness_clone.experience import ExperienceLibrary
+    from harness_clone.storage import RunStore
+
+    base_harness = Path(__file__).parents[1] / "examples/base-harness"
+    store = RunStore(base / "runs" / "daily-2026-10-19")
+    digest = store.publish_bundle(base_harness)
+    store.save_execution(
+        ExecutionRecord(
+            execution_id="d1/x/agg1",
+            task_id="d1",
+            bundle_digest=digest,
+            delivered=True,
+            trace=[{"id": "t0", "type": "tool_call", "content": "sized positions"}],
+            artifacts={"recommendations.json": "{}"},
+        )
+    )
+    lib = ExperienceLibrary(store)
+    refs = ["d1/x/agg1:trace:t0", "d1/x/agg1:artifact:recommendations.json"]
+    for ordinal, lesson in enumerate(
+        ["Cap any single position at 20% target weight", "Cap any single position at 20% target weight"],
+        start=1,
+    ):
+        lib.append(
+            ExperienceEntry(
+                namespace="ns",
+                domain="portfolio",
+                task_id=f"d{ordinal}",
+                ordinal=ordinal,
+                bundle_digest=digest,
+                cue="position-sizes",
+                lesson=lesson,
+                evidence_refs=refs,
+            )
+        )
+    return store, digest
+
+
+def test_memory_wiki_and_dream_endpoints(tmp_path):
+    from harness_clone.portfolio_ops import write_adopted
+
+    base = tmp_path / "portfolio"
+    store, digest = _seed_experience_store(base)
+    write_adopted(base, digest, store)
+
+    c = client(base)
+    wiki = c.get("/api/memory").json()
+    assert wiki["adopted_bundle"] == digest
+    assert any(name.startswith("memory/") for name in wiki["files"])
+
+    report = c.post("/api/dream", json={}).json()
+    assert report["audit"]["entries"] == 2
+    assert report["restated"] == 1 and report["merged"] == 1
+    assert report["patch_digest"] and not report["adopted"]
+
+    adopted_report = c.post("/api/dream", json={"adopt": True}).json()
+    assert adopted_report["adopted"] is True
+    served = c.get("/api/memory").json()
+    assert served["adopted_bundle"] == adopted_report["patch_digest"]
+    assert any("distilled offline" in text for text in served["files"].values())
+
+
+def test_dream_with_no_experience_stores_is_404(tmp_path):
+    response = client(tmp_path).post("/api/dream", json={})
+    assert response.status_code == 404
+    assert "no run store" in response.json()["detail"]

@@ -147,6 +147,38 @@ class ExperienceEntry(Record):
     lesson: str
     evidence_refs: list[str] = Field(min_length=1)
     confidence: str = "observational"
+    # Offline consolidation ("dreaming") metadata. Defaults keep entries
+    # written before dreaming existed loadable; a revision above 0 marks a
+    # dream restatement under a fresh identity key.
+    origin: Literal["session", "dream"] = "session"
+    revision: int = Field(default=0, ge=0)
+    verified_on: str | None = None
+    supersedes: list[str] = Field(default_factory=list)
+
+
+class DreamFinding(Record):
+    key: str
+    status: Literal[
+        "intact", "verified", "broken-ref", "duplicate", "conflict", "stale", "secret", "superseded"
+    ]
+    detail: str = ""
+
+
+class DreamAudit(Record):
+    entries: int
+    adopted_digest: str | None = None
+    findings: list[DreamFinding] = Field(default_factory=list)
+
+
+class DreamReport(Record):
+    audit: DreamAudit
+    restated: int = 0
+    merged: int = 0
+    conflicts_marked: int = 0
+    wiki_files: list[str] = Field(default_factory=list)
+    parent_digest: str | None = None
+    patch_digest: str | None = None
+    adopted: bool = False
 
 
 class TaskResult(Record):

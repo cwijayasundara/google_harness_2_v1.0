@@ -312,6 +312,61 @@ Selection chooses an existing composed output. Practical mode additionally allow
 
 `--editor-policy pi` routes the complete INV/DOM/COMPOSE stage through Pi under a fixed policy, including code-bearing changes. `--editor-policy text` uses a filesystem-only Deep Agent editor and rejects executable changes. Selection and reflection use filesystem-only Deep Agents in both policies.
 
+## Dreaming: consolidate memory offline
+
+Reflection captures lessons while a task runs; dreaming is the offline pass that later improves what future tasks read (see `docs/dreaming.md`, after Anthropic's "components of agent memory" and the Managed Agents dreaming cookbook). The command makes no model calls and spends nothing:
+
+```bash
+uv run harness-clone dream --run-dir runs/live-summary            # audit + consolidate + publish wiki bundle
+uv run harness-clone dream --run-dir runs/weekly --adopt          # also adopt it into runs/portfolio
+```
+
+It re-verifies every experience lesson against the execution records it cites (recording a `verified_on` date on restatements), merges duplicate lessons, keeps later corrections with a "replaces" note, marks unresolved disagreements as explicit CONFLICTs instead of guessing, and republishes the library as a small linked memory wiki (`memory/<domain>.md` files plus a regenerated `AGENTS.md` index, hand-written standing text preserved). The wiki is published as a normal memory-only bundle patch against the adopted harness, so adoption flows through the usual validated path; superseded entries stay in the store as audit stubs while snapshots stop serving them.
+
+### Testing the dream
+
+Three levels, from fast to realistic. None of the first two spend money or need an API key.
+
+**1. Automated tests** cover the dream's behavior end to end: audit classification (verified, duplicate, conflict, broken-ref, stale, secret, superseded), merge and correction restatements, snapshot filtering of superseded entries, wiki generation with retrieval caps and secret redaction, and digest-stable convergence:
+
+```bash
+uv run pytest tests/test_dreaming.py -v    # the dreaming tests alone
+uv run pytest -q                           # the full suite
+```
+
+**2. Offline demo** seeds a run store with six experiences that exercise every behavior — a duplicate pair, a later correction of it, a lone verified lesson, a broken evidence reference, a secret-shaped lesson, and provenance to re-check — then runs the real CLI:
+
+```bash
+uv run python scripts/dream_demo.py                                                            # seeds runs/dream-demo, no spend
+uv run harness-clone dream --run-dir runs/dream-demo --base-harness examples/base-harness      # prints a JSON report
+cat runs/dream-demo/bundles/*/memory/portfolio.md                                              # the published wiki
+uv run harness-clone dream --run-dir runs/dream-demo --base-harness examples/base-harness      # run it a second time
+```
+
+What to check in the output:
+
+- First run's report: `audit.findings` names each entry's status; the counters are outcomes — `restated` (corrections plus verified restatements), `merged` (entries that supersede more than one member), `conflicts_marked` (explicit CONFLICT notes), and `patch_digest` (the published wiki bundle).
+- `memory/portfolio.md` states current understanding with provenance: the correction reads `Cap positions at 12%; ... (replaces "Cap any single position at 20%..." from d1)` with a `verified` date, the broken-ref entry stays `unverified`, and the secret lesson is absent from the wiki (it remains in the store, flagged `secret` in the audit).
+- Second run: `restated` is `0` and `patch_digest` is identical — the dream converges instead of rewriting memory forever.
+- Reset the demo with `rm -rf runs/dream-demo`.
+
+**3. Cockpit UI** — the backend exposes `GET /api/memory` (the wiki the adopted bundle serves at startup) and `POST /api/dream` (runs the dream on the newest run store with experiences, or one you name; `"adopt": true` adopts the result). The UI's **Memory & dreaming** panel shows the wiki files and a **Run dream** button with the report tiles (entries audited, restated, merged, conflicts):
+
+```bash
+scripts/start-backend.sh --demo        # or without --demo for runs/portfolio
+scripts/start-frontend.sh              # then open http://127.0.0.1:5173
+```
+
+**4. Real pipeline** — after the portfolio agent reflects experiences during evolution, run the dream on your own cadence (per the cookbook, dreaming is an offline step, not part of every run). The `dream` step itself never spends money; only `run-daily` does:
+
+```bash
+uv run harness-clone run-daily --base-dir runs/portfolio ...                               # existing flow; reflects experiences
+uv run harness-clone dream --run-dir runs/portfolio --base-dir runs/portfolio              # candidate wiki bundle
+uv run harness-clone dream --run-dir runs/portfolio --base-dir runs/portfolio --adopt      # also adopt it
+```
+
+Without `--adopt` the dream bundle waits in the run store for the next evolution or for review; with it, `runs/portfolio/adopted.json` points at the new digest and the wiki is what agents read at startup. Design details and the mapping to Anthropic's research live in `docs/dreaming.md`.
+
 ## Author a harness
 
 Start with `examples/base-harness/`:

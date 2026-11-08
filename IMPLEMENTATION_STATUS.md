@@ -2,6 +2,10 @@
 
 Updated: 21 October 2026. Implementation stopped at the user's request to continue from Muse.
 
+## Dreaming update (8 November 2026)
+
+Offline consolidation of the experience library ("dreaming") is implemented per Anthropic's "The components of agent memory" and the Managed Agents dreaming cookbook: `src/harness_clone/dreaming.py`, `harness-clone dream` CLI, revisioned `ExperienceEntry` fields (`origin`/`revision`/`verified_on`/`supersedes`), snapshot supersession filtering, salience-steered reflect instructions, and `tests/test_dreaming.py` (10 tests). The dream is deterministic and free: it audits every lesson against stored executions, merges duplicates, keeps later corrections with source notes, marks conflicts, and publishes the consolidated library as a memory wiki bundle patch (`memory/<domain>.md` + regenerated `AGENTS.md` index). Verification at time of writing: full suite 324 passed, 5 skipped; ruff clean. Live distillation of missed process observations from full traces (model calls via the gateway) is deferred; see `docs/dreaming.md` section 5.
+
 ## Portfolio agent update (Tasks 2–9, 21 October 2026)
 
 The self-evolving portfolio agent is implemented on `main` and proven offline: CSV portfolio loader, market providers/screener, frozen snapshot tasks, portfolio bundle with recommendation validator, offline scorer, `portfolio fetch|daily|evolve|score` CLI, and point-in-time historical bootstrap. Task 9 adds `tests/test_portfolio_integration.py` (fake executor/editor through `run_daily` plus one sequential `run_evolution` over three dated tasks; reflected lessons only flow forward) and a `docker`-marked in-container `portfolio_math.py` test in `tests/test_sandbox.py`. Current verification: Python suite 191 passed, 3 skipped; Ruff clean; Pi worker 3 passed and TypeScript build passed. The new Docker test is written and marked correctly but **unverified in this environment** (Docker socket access denied; with `HARNESS_TEST_DOCKER=1` all three docker-marked tests fail on daemon access, and without it the test skips).
