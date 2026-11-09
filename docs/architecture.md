@@ -154,15 +154,27 @@ snapshot(namespace, domain, ordinal)    earlier ordinals only,
           v
 ```
 
-### Pass 2: dream (offline, free)
+### Pass 2: dream (offline; free unless --distill)
 
-`harness-clone dream --run-dir <dir> [--base-dir <portfolio>] [--adopt]`, or
-`POST /api/dream` from the cockpit. No model calls, no spend, deterministic:
+`harness-clone dream --run-dir <dir> [--base-dir <portfolio>] [--adopt]
+[--distill --max-usd <cap>]`, or `POST /api/dream` from the cockpit. No
+model calls, no spend, deterministic — unless `--distill` opts into metered
+analyzer calls:
 
 ```text
      run store (run.sqlite)                    adopted bundle
           |                                         |
           v                                         |
++------------------------+                          |
+| 0. distill (--distill) | one metered structured   |
+|  full-trace hindsight  | call per unanalyzed      |
+|  transcript; citations | transcript; refs must    |
+|  must resolve; secrets | resolve IN the analyzed  |
+|  dropped; per-input    | trace; entries get       |
+|  accounting; converge  | origin="distilled"       |
++-----------+------------+                          |
+            |                                       |
+            v                                       |
 +------------------------+                          |
 | 1. audit_library       | every evidence ref       |
 |    per-entry status:   | re-resolved against      |
@@ -243,9 +255,14 @@ one link away, and full history stays in the store:
 Guarantees that fall out of the shape: the budget ledger is untouched, the
 dream can never edit graders, tasks, or controller code (it flows through
 bundle validation like anything else), and repeated dreams converge instead
-of rewriting memory forever. What is deferred: live distillation — model
-calls that extract missed process observations from full traces (see
-`docs/dreaming.md`, section 5).
+of rewriting memory forever.
+
+Live distillation (`--distill`) is the metered half of the cookbook
+workflow: full transcripts are re-read with hindsight for process lessons
+the in-session reflect could not see, every observation must cite rows
+that exist in the analyzed trace, and distilled entries then flow through
+the same deterministic audit/consolidate/wiki pipeline as session lessons
+(see `docs/dreaming.md`, section 5).
 
 ## Editable bundle
 

@@ -321,6 +321,8 @@ uv run harness-clone dream --run-dir runs/live-summary            # audit + cons
 uv run harness-clone dream --run-dir runs/weekly --adopt          # also adopt it into runs/portfolio
 ```
 
+Optionally add live distillation: `--distill --max-usd <cap>` re-reads full transcripts with hindsight (one metered structured call each, through the same budgeted gateway as editing) for process lessons reflection missed — failed attempts, fallbacks, error-to-repair cycles. Distilled lessons must cite trace rows that exist in the analyzed transcript; they then flow through the deterministic audit/consolidate/wiki pipeline like any other lesson.
+
 It re-verifies every experience lesson against the execution records it cites (recording a `verified_on` date on restatements), merges duplicate lessons, keeps later corrections with a "replaces" note, marks unresolved disagreements as explicit CONFLICTs instead of guessing, and republishes the library as a small linked memory wiki (`memory/<domain>.md` files plus a regenerated `AGENTS.md` index, hand-written standing text preserved). The wiki is published as a normal memory-only bundle patch against the adopted harness, so adoption flows through the usual validated path; superseded entries stay in the store as audit stubs while snapshots stop serving them.
 
 ### Testing the dream

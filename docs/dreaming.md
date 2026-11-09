@@ -1,7 +1,7 @@
 # Dreaming: offline consolidation of the experience library
 
 Date: 2026-11-08
-Status: Implemented (deterministic dream); live distillation deferred
+Status: Implemented (deterministic dream + live distillation)
 References:
 - Anthropic, "The components of agent memory" (Nov 2026) — research post
 - Claude Cookbook, "Dreaming with a dynamic workflow" (Managed Agents)
@@ -27,6 +27,7 @@ This repo already had the capture half (`editor.reflect()` →
 | Transcripts (ground truth) | Execution records + traces in `run.sqlite` (`kind='execution'`) |
 | Memory notes | `ExperienceEntry` (cue / lesson / evidence_refs / confidence) |
 | Salience tagging in the moment | `editor.reflect()` after each adopted execution (existing) |
+| Dream extracts what reflection missed | `distill.py` (`--distill`): one metered analyzer call per unanalyzed transcript over the FULL trace (failed attempts, fallbacks, error→repair), guarded by resolvable citations, credential scrub, and per-input accounting |
 | Dream verifies memory against transcripts | `audit_library`: every entry's evidence refs re-resolved against stored executions; digest staleness checked against the adopted bundle |
 | "How it is known" — validated rules | `verified_on` date + `confidence="verified"` on dream restatements |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson, notes what it replaced with source + date, supersedes the old entries |
@@ -41,8 +42,26 @@ This repo already had the capture half (`editor.reflect()` →
 
 ## 3. Pipeline
 
-`harness-clone dream --run-dir <dir> [--base-dir runs/portfolio] [--adopt]`
+`harness-clone dream --run-dir <dir> [--base-dir runs/portfolio] [--adopt]
+[--distill --max-usd <cap>]`
 
+0. **Distill** (optional, metered). With `--distill`, every execution
+   transcript not yet analyzed is read with hindsight by one structured
+   model call (`distill.py`): full trace — failed attempts, fallbacks,
+   error→repair cycles the in-session reflect only ever saw excerpts of.
+   Proposed observations must cite trace rows that exist in the analyzed
+   transcript (hallucinated citations are counted as skips, never
+   stored), pass the credential scrub, and land at an ordinal past every
+   existing entry so hindsight reaches only later tasks. Transcripts are
+   embedded as untrusted data; every call is metered by the same gateway
+   and budget ledger as editing; each input is accounted for in the
+   report (`analyzed` / `distilled` / `distill_skipped`) and every
+   analyzer outcome — entry, skip, or reason — is persisted under
+   `kind='distilled'`, so repeated dreams converge. Unattributable
+   transcripts (no stream task-map entry) are skipped, not guessed at.
+   Distilled entries carry `origin="distilled"` and are then audited,
+   verified, merged, and restated by the deterministic stages below
+   exactly like session-captured lessons.
 1. **Audit** (deterministic, free). Load every entry; classify:
    `verified` (refs resolve, no verification date yet), `intact` (already
    restated), `broken-ref`, `stale` (bundle differs from adopted),
@@ -71,8 +90,11 @@ This repo already had the capture half (`editor.reflect()` →
 
 ## 4. Guarantees
 
-- **No model calls, no spend.** The dream is deterministic Python; the
-  budget ledger is untouched.
+- **No model calls, no spend — unless you ask.** The default dream is
+  deterministic Python; the budget ledger is untouched. `--distill`
+  opts into metered analyzer calls through the same gateway as editing.
+  The cockpit's dream button stays free (distillation is CLI-governed
+  spend).
 - **Append-only truth.** Nothing in the store is deleted or rewritten;
   superseded entries remain inspectable.
 - **Snapshots stay causal.** Ordinal scoping is preserved; corrections are
@@ -82,14 +104,32 @@ This repo already had the capture half (`editor.reflect()` →
 - **Convergence.** Dream-origin entries are never restated; a second dream
   over unchanged state publishes the identical digest.
 
-## 5. Deferred: live distillation
+## 5. Live distillation
 
-The cookbook's analyzers also *extract* new facts from full transcripts
-with hindsight (failed attempts, fallbacks, error→repair cycles the
-in-session reflect never saw). The deterministic dream verifies and
-organizes what was captured; distilling what was missed requires model
-calls through the gateway with budget staging — the same machinery as
-`DeepAgentEditor._run`. When added, it should follow the cookbook's
-shape: one cheap-model analyzer per task result, an organizer pass after,
-transcript content treated as data (never instructions), and the report
-counting every input that failed to yield an entry.
+Implemented (stage 0 above). The deterministic dream verifies and
+organizes what was captured; distillation adds what reflection could not
+see: one cheap-model analyzer per unanalyzed transcript (`distill.py`),
+injected with the full trace plus the domain's already-recorded lessons,
+returning at most one observation or a recorded reason. The organizer is
+the deterministic dream itself — distilled entries flow through the same
+audit → consolidate → wiki pipeline as session-captured lessons, so
+verification, conflict handling, and convergence are shared, not
+duplicated.
+
+Guards, in order:
+
+1. **Budget.** `--distill` requires `--max-usd > 0` and a configured
+   `FIREWORKS_API_KEY`; every call is metered via the gateway.
+2. **Data, not instructions.** The transcript is written to the virtual
+   `/context.json` that `run_structured` already labels untrusted; the
+   analyzer prompt repeats that transcript content is data, never
+   instructions.
+3. **Citations must resolve.** An observation whose evidence refs do not
+   exist in the analyzed transcript is counted and recorded, never
+   stored.
+4. **Credentials never enter memory.** Credential-shaped cues or lessons
+   are dropped before append.
+5. **Accountability.** The report counts `analyzed` / `distilled` /
+   `distill_skipped`; the store keeps one `kind='distilled'` record per
+   execution with the outcome, which is what makes repeated dreams
+   idempotent.

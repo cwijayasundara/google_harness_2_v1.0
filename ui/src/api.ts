@@ -168,6 +168,9 @@ export interface DreamReport {
   parent_digest: string | null;
   patch_digest: string | null;
   adopted: boolean;
+  analyzed?: number;
+  distilled?: number;
+  distill_skipped?: number;
 }
 
 export interface DreamRequest {

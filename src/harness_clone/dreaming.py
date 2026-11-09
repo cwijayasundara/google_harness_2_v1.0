@@ -35,6 +35,7 @@ from .contracts import (
     DreamFinding,
     DreamReport,
     ExperienceEntry,
+    ExperimentConfig,
     HarnessConfig,
     HarnessPatch,
 )
@@ -362,12 +363,16 @@ def run_dream(
     adopted_digest: str | None = None,
     retrieval_limit: int | None = None,
     adopt_base_dir: Path | None = None,
+    distill_config: ExperimentConfig | None = None,
 ) -> DreamReport:
     """Audit, consolidate, and republish memory as a candidate bundle patch.
 
     The patch applies to ``parent_root`` (normally the adopted bundle) and
     is published into the run store; adopting it into a portfolio base
-    directory is an explicit, separate step.
+    directory is an explicit, separate step. With ``distill_config`` (a
+    spending-capped ``ExperimentConfig``), full transcripts are first
+    analyzed for process lessons reflection missed; every metered call is
+    charged to the same budget ledger as editing.
     """
     parent_root = Path(parent_root)
     if adopted_digest is None:
@@ -389,6 +394,11 @@ def run_dream(
             else 5
         )
     entries = load_entries(store)
+    distill_stats = None
+    if distill_config is not None:
+        from .distill import analyze_transcripts
+
+        _, distill_stats = analyze_transcripts(distill_config, store, entries)
     audit = audit_library(store, entries, adopted_digest)
     dream = consolidate(store, entries, audit)
     files = build_memory_files(
@@ -401,6 +411,9 @@ def run_dream(
         conflicts_marked=sum(1 for e in dream if e.lesson.startswith("CONFLICT")),
         wiki_files=sorted(files),
         parent_digest=adopted_digest,
+        analyzed=distill_stats.analyzed if distill_stats else 0,
+        distilled=distill_stats.distilled if distill_stats else 0,
+        distill_skipped=distill_stats.skipped if distill_stats else 0,
     )
     if files:
         patch = HarnessPatch(parent_digest=adopted_digest, upserts=files)

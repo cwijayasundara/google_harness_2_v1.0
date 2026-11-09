@@ -149,8 +149,9 @@ class ExperienceEntry(Record):
     confidence: str = "observational"
     # Offline consolidation ("dreaming") metadata. Defaults keep entries
     # written before dreaming existed loadable; a revision above 0 marks a
-    # dream restatement under a fresh identity key.
-    origin: Literal["session", "dream"] = "session"
+    # dream restatement under a fresh identity key. "distilled" marks entries
+    # an offline analyzer extracted from full transcripts after the session.
+    origin: Literal["session", "dream", "distilled"] = "session"
     revision: int = Field(default=0, ge=0)
     verified_on: str | None = None
     supersedes: list[str] = Field(default_factory=list)
@@ -179,6 +180,14 @@ class DreamReport(Record):
     parent_digest: str | None = None
     patch_digest: str | None = None
     adopted: bool = False
+    # Live distillation outcome (all zeros when distillation is off).
+    analyzed: int = 0
+    distilled: int = 0
+    distill_skipped: int = 0
+    # Live distillation outcome (all zeros when distillation is off).
+    analyzed: int = 0
+    distilled: int = 0
+    distill_skipped: int = 0
 
 
 class TaskResult(Record):

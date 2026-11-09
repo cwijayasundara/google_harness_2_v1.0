@@ -91,6 +91,10 @@ def run_stream(
     signature = stream_signature(tasks)
     check_stream(store, tasks, base_digest, learn=learn)
     store.put("stream", "signature", {"signature": signature, "learn": learn, "base": base_digest})
+    # Authoritative task→domain map for offline analysis (distillation);
+    # experience entries carry the same mapping per task, but only for
+    # tasks whose reflection produced an entry.
+    store.put("stream", "task-domains", {t.id: t.domain for t in tasks})
     namespace = fingerprint({"config": config.model_dump(mode="json"), "base": base_digest})
     lib = ExperienceLibrary(store)
     groups = defaultdict(list)
