@@ -198,7 +198,9 @@ analyzer calls:
 | 3. build_memory_files                                     |
 |  memory/<domain>.md: current understanding + provenance   |
 |  memory/AGENTS.md: standing text kept, index regenerated  |
-|  file count capped by config retrieval_limit              |
+|  count capped by retrieval_limit; pages split so no       |
+|  single file exceeds memory_budget_tokens*4 chars —       |
+|  lessons are never truncated                              |
 +--------------------------------------------+---------------+
                                              |
                                              v
@@ -213,7 +215,8 @@ The wiki is the small injected top layer the research describes; detail is
 one link away, and full history stays in the store:
 
 ```text
- injected at startup, bounded by retrieval_limit
+ injected at startup, bounded by retrieval_limit and
+ memory_budget_tokens (chars/4 ~ tokens, index preloads first)
  +------------------------------------------------------+
  | memory/AGENTS.md                                     |
  |   hand-written standing text (never regenerated)     |
@@ -240,13 +243,13 @@ one link away, and full history stays in the store:
 |---|---|
 | Transcripts as ground truth | Execution records + traces in `run.sqlite` |
 | In-session salience tagging | `editor.reflect()` (Pass 1) |
-| Dream verifies memory against transcripts | `audit_library` re-resolving every ref |
+| Dream verifies memory against transcripts | `audit_library` re-resolving every ref; `--verify` adds the semantic judgment (`semantic.py`) |
 | "How it is known" / validated rules | `verified_on` date + `confidence="verified"` |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson and notes what it replaced (source, date, bundle) |
-| Conflicts: keep both sides, never guess | One `CONFLICT` note quoting every side; snapshots serve the note, not either side |
+| Conflicts: keep both sides, never guess | One `CONFLICT` note quoting every side; snapshots serve the note, not either side — a semantic-audit correction needs resolving rebuttal refs too |
 | Duplicates merged with stubs | Merge restatements supersede the group; store keeps the originals |
 | Wiki files + `_index.md` catalog | `memory/<domain>.md` + regenerated `AGENTS.md` index |
-| Small injected top layer | File count and size bounded by `retrieval_limit` |
+| Small injected top layer | Count bounded by `retrieval_limit`, size by `memory_budget_tokens` (index first, over-budget pages named for on-demand reading) |
 | Never copy secrets into memory | Credential-shape scan drops them from the wiki; store copies stay auditable |
 | Deterministic dreams that converge | Revisioned keys; dream entries are never restated; unchanged state republishes the same digest |
 | Failed nights retry, cadence is offline | The dream is free; run it after any evolve week, or never |
@@ -257,12 +260,15 @@ dream can never edit graders, tasks, or controller code (it flows through
 bundle validation like anything else), and repeated dreams converge instead
 of rewriting memory forever.
 
-Live distillation (`--distill`) is the metered half of the cookbook
-workflow: full transcripts are re-read with hindsight for process lessons
-the in-session reflect could not see, every observation must cite rows
-that exist in the analyzed trace, and distilled entries then flow through
-the same deterministic audit/consolidate/wiki pipeline as session lessons
-(see `docs/dreaming.md`, section 5).
+Live distillation (`--distill`) and the semantic audit (`--verify`) are
+the metered halves of the cookbook workflow: full transcripts are re-read
+with hindsight for process lessons the in-session reflect could not see,
+and existing lessons are judged against the transcripts they cite. Every
+observation must cite rows that exist in the analyzed trace; a correction
+needs rebuttal refs that resolve too. Both flow through the same
+deterministic audit/consolidate/wiki pipeline as session lessons (see
+`docs/dreaming.md`, sections 5 and 6; design history in
+`docs/superpowers/specs/2026-11-09-comprehensive-dreaming.md`).
 
 ## Editable bundle
 
@@ -273,7 +279,8 @@ manifest.json          schema, parent digest, enabled components
 config.json            context, compaction, retrieval, delegation depth
 system.md              system prompt
 guardrails.md          task-behavior guidance
-memory/*.md            startup memory, bounded by retrieval_limit
+memory/*.md            startup memory, bounded by retrieval_limit and
+                       memory_budget_tokens (chars/4 ~ tokens)
 tools/descriptions.json
 subagents/*.json       same Fireworks model, one delegation level
 skills/<name>/SKILL.md

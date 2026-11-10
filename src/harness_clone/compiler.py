@@ -52,6 +52,35 @@ class ToolCallLimit(AgentMiddleware):
         return handler(request)
 
 
+def select_memory_pages(
+    pages: list[Path], tuning: HarnessConfig
+) -> tuple[list[Path], list[Path]]:
+    """Choose the injected memory layer within the token budget.
+
+    ``memory/AGENTS.md`` (the index) always preloads first; remaining
+    pages follow in sorted order while the cumulative size (chars/4 ≈
+    tokens) fits ``memory_budget_tokens`` and the retrieval count cap.
+    Returns (selected, skipped) — skipped pages stay readable on disk;
+    the prompt names them so the agent knows to read them on demand.
+    """
+    ordered = sorted(pages, key=lambda p: (p.name != "AGENTS.md", p.name))
+    budget = tuning.memory_budget_tokens * 4
+    used = 0
+    selected: list[Path] = []
+    skipped: list[Path] = []
+    for page in ordered:
+        size = page.stat().st_size
+        if page.name == "AGENTS.md":
+            selected.append(page)  # the index is the top layer's core
+            used += size
+        elif len(selected) < tuning.retrieval_limit and used + size <= budget:
+            selected.append(page)
+            used += size
+        else:
+            skipped.append(page)
+    return selected, skipped
+
+
 def compile_agent(bundle_root: Path, backend, config: ExperimentConfig):
     manifest = validate_bundle(bundle_root, config)
     tuning = HarnessConfig.model_validate_json((bundle_root / "config.json").read_text())
@@ -108,11 +137,18 @@ def compile_agent(bundle_root: Path, backend, config: ExperimentConfig):
     if "guardrails" in enabled and (bundle_root / "guardrails.md").exists():
         prompt += "\n\n" + (bundle_root / "guardrails.md").read_text()
     prompt += f"\nRetrieve at most {tuning.retrieval_limit} relevant memory/skill entries per lookup. Delegate at most {tuning.delegation_depth} levels; do not create additional execution agents."
-    memory = (
-        [str(p) for p in sorted((runtime / "memory").glob("*.md"))][: tuning.retrieval_limit]
-        if "memory" in enabled
-        else None
-    )
+    memory = None
+    if "memory" in enabled:
+        selected, skipped = select_memory_pages(
+            sorted((runtime / "memory").glob("*.md")), tuning
+        )
+        memory = [str(p) for p in selected] or None
+        if skipped:
+            names = ", ".join(p.name for p in skipped)
+            prompt += (
+                f"\nMemory pages not preloaded within the token budget "
+                f"(read on demand): {names}."
+            )
     return create_deep_agent(
         model=model,
         system_prompt=prompt,

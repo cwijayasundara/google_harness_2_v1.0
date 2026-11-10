@@ -28,13 +28,13 @@ This repo already had the capture half (`editor.reflect()` →
 | Memory notes | `ExperienceEntry` (cue / lesson / evidence_refs / confidence) |
 | Salience tagging in the moment | `editor.reflect()` after each adopted execution (existing) |
 | Dream extracts what reflection missed | `distill.py` (`--distill`): one metered analyzer call per unanalyzed transcript over the FULL trace (failed attempts, fallbacks, error→repair), guarded by resolvable citations, credential scrub, and per-input accounting |
-| Dream checks memory against transcripts | `audit_library`: every entry's evidence refs re-resolved against stored executions; digest staleness checked against the adopted digest. A *structural* check — it catches broken citations, not false lessons whose citations resolve; semantic re-reading of transcripts is `distill.py`'s job (and a future audit pass) |
+| Dream checks memory against transcripts | `audit_library` re-resolves every evidence ref (structural); `--verify` adds the semantic judgment: one structured call re-reads the full traces a lesson cites (`semantic.py`) |
 | "How it is known" — validated rules | `verified_on` date + `confidence="verified"` on dream restatements |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson, notes what it replaced with source + date, supersedes the old entries |
 | Conflicts: keep both sides, never guess | `CONFLICT` note quoting every side with task, bundle, and verification date; snapshot serves the note instead of either side |
 | Duplicates merged, `MOVED TO` stubs | Merge restatements supersede the group; superseded entries stay in the store (append-only audit trail) but `snapshot()` stops serving them |
-| Wiki: small linked files + `_index.md` catalog | `memory/<domain>.md` files with frontmatter + `memory/AGENTS.md` index with `[[slug]]` links |
-| Small injected top layer (MEMORY.md 200-line cap) | The wiki files are capped so `retrieval_limit` bounds what loads at startup; `AGENTS.md` is the index, detail one link away |
+| Wiki: small linked files + `_index.md` catalog | `memory/<domain>.md` files with frontmatter + `memory/AGENTS.md` index with `[[slug]]` links; pages that would exceed the injected budget are split into indexed parts, never truncated |
+| Small injected top layer (MEMORY.md 200-line cap) | The compiler preloads memory pages within `memory_budget_tokens` (index first, then best-fit); what did not fit is named in the prompt for on-demand reading |
 | Never copy secrets into memory | Credential-shape scan drops secret-bearing lessons from the wiki; store copies stay for audit |
 | Dreams keep working memory small / focused | Hand-written `AGENTS.md` standing text is preserved; only the marker-delimited index block is regenerated |
 | Cadence; failed nights retry | The dream is deterministic and free; rerun anytime — it converges (no new restatements when nothing changed) |
@@ -43,7 +43,7 @@ This repo already had the capture half (`editor.reflect()` →
 ## 3. Pipeline
 
 `harness-clone dream --run-dir <dir> [--base-dir runs/portfolio] [--adopt]
-[--distill --max-usd <cap>]`
+[--distill --max-usd <cap>] [--verify --max-usd <cap>]`
 
 0. **Distill** (optional, metered). With `--distill`, every execution
    transcript not yet analyzed is read with hindsight by one structured
@@ -62,6 +62,20 @@ This repo already had the capture half (`editor.reflect()` →
    Distilled entries carry `origin="distilled"` and are then audited,
    verified, merged, and restated by the deterministic stages below
    exactly like session-captured lessons.
+0b. **Semantic audit** (optional, metered). With `--verify`, every
+   structurally-intact, not-yet-verdict-ed lesson is judged by one
+   structured model call against the full transcripts its citations
+   point into (`semantic.py`) — the Mt. Moon test the deterministic
+   audit cannot do. Verdicts persist (`kind='semantic-verdict'`), so
+   repeated dreams re-verify nothing. `contradicted` lessons are
+   corrected by a governed restatement (supersede, `verified_on`,
+   `confidence="verified"`) — but only when the rebuttal's own
+   citations resolve in the store; a hallucinated rebuttal is recorded
+   as inconclusive, never guessed. `supported` verdicts make the later
+   restatement truly verified; structural-only restatements say so
+   (`confidence="structural"`). Stale-bundle entries are verified
+   first — the information most likely to have changed. Report:
+   `semantic_checked / supported / corrected / inconclusive`.
 1. **Audit** (deterministic, free). Load every entry; classify:
    `verified` (refs resolve, no verification date yet), `intact` (already
    restated), `broken-ref`, `stale` (bundle differs from adopted),
@@ -95,31 +109,32 @@ This repo already had the capture half (`editor.reflect()` →
   opts into metered analyzer calls through the same gateway as editing.
   The cockpit's dream button stays free (distillation is CLI-governed
   spend).
-- **Structural, not semantic.** The dream proves citations resolve,
-  duplicates merge, conflicts surface, and bundles are fresh. It cannot
-  prove a well-cited lesson is *true* — that needs a model re-reading
-  the transcript (distillation writes new lessons; a semantic audit of
-  existing ones is future work).
+- **Structural, not semantic — unless you ask.** The deterministic dream
+  proves citations resolve, duplicates merge, conflicts surface, and
+  bundles are fresh. It cannot prove a well-cited lesson is *true*;
+  `--verify` adds that judgment as a metered stage (and a semantic-audit
+  pass over existing entries is the same seam).
 - **Append-only truth.** Nothing in the store is deleted or rewritten;
   superseded entries remain inspectable.
 - **Snapshots stay causal.** Ordinal scoping is preserved; corrections are
   visible exactly when the entries they replace were visible.
 - **Trust boundary intact.** Dream output flows through bundle validation;
   it can never edit graders, tasks, or controller code.
-- **Convergence.** Dream-origin entries are never restated; a second dream
-  over unchanged state publishes the identical digest.
+- **Convergence.** Dream-origin entries are never restated; verdicts and
+  distilled-outcome records persist; a second dream over unchanged
+  state publishes the identical digest.
 
-## 5. Live distillation
+## 5. Live distillation and the semantic audit
 
-Implemented (stage 0 above). The deterministic dream verifies and
-organizes what was captured; distillation adds what reflection could not
-see: one cheap-model analyzer per unanalyzed transcript (`distill.py`),
-injected with the full trace plus the domain's already-recorded lessons,
-returning at most one observation or a recorded reason. The organizer is
-the deterministic dream itself — distilled entries flow through the same
-audit → consolidate → wiki pipeline as session-captured lessons, so
-verification, conflict handling, and convergence are shared, not
-duplicated.
+Both model-driven stages are implemented. The deterministic dream
+verifies and organizes what was captured; distillation adds what
+reflection could not see (one cheap-model analyzer per unanalyzed
+transcript — `distill.py`), and the semantic audit judges existing
+lessons against the transcripts they cite (`semantic.py`). In both
+cases the organizer is the deterministic dream itself — new entries and
+corrections flow through the same audit → consolidate → wiki pipeline
+as session-captured lessons, so verification, conflict handling, and
+convergence are shared, not duplicated.
 
 Guards, in order:
 
@@ -138,3 +153,33 @@ Guards, in order:
    `distill_skipped`; the store keeps one `kind='distilled'` record per
    execution with the outcome, which is what makes repeated dreams
    idempotent.
+
+## 6. The semantic audit (`--verify`)
+
+The deterministic audit proves citations *resolve*; it cannot prove a
+well-cited lesson is *true*. `--verify` adds the missing judgment
+(`semantic.py`): one structured model call per unverified entry re-reads
+the **full traces** the lesson's citations point into — artifacts
+truncated to keep prompts bounded — and returns `supported`,
+`contradicted`, or `not_determined` with a reason.
+
+Properties:
+
+- **Verdicts persist.** Stored under `kind='semantic-verdict'` keyed by
+  the entry's revisioned key, so repeated dreams re-verify nothing.
+- **Corrections are governed restatements.** A `contradicted` verdict
+  with a `corrected_lesson` produces a superseding entry
+  (`origin="dream"`, `verified_on`, `confidence="verified"`) — but only
+  if the rebuttal's own `contradicting_refs` resolve in the store. A
+  hallucinated rebuttal is recorded as inconclusive, never guessed;
+  a secret-shaped correction is dropped like any secret-bearing lesson.
+- **Confidence is honest.** Restatements of `supported` lessons are
+  `confidence="verified"`; without `--verify`, dream restatements say
+  `confidence="structural"` — structurally intact, semantically
+  unjudged.
+- **Stale first.** Entries whose bundle digest differs from the adopted
+  digest are verified before current-bundle entries, oldest first —
+  the information most likely to have changed gets the budget.
+- **Report.** `semantic_checked / supported / corrected /
+  inconclusive` join the existing counters; the free dream never
+  changes.

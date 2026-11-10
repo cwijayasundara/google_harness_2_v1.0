@@ -171,6 +171,10 @@ export interface DreamReport {
   analyzed?: number;
   distilled?: number;
   distill_skipped?: number;
+  semantic_checked?: number;
+  semantic_supported?: number;
+  semantic_corrected?: number;
+  semantic_inconclusive?: number;
 }
 
 export interface DreamRequest {

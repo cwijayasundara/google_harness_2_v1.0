@@ -323,6 +323,8 @@ uv run harness-clone dream --run-dir runs/weekly --adopt          # also adopt i
 
 Optionally add live distillation: `--distill --max-usd <cap>` re-reads full transcripts with hindsight (one metered structured call each, through the same budgeted gateway as editing) for process lessons reflection missed — failed attempts, fallbacks, error-to-repair cycles. Distilled lessons must cite trace rows that exist in the analyzed transcript; they then flow through the deterministic audit/consolidate/wiki pipeline like any other lesson.
 
+Optionally add a semantic audit: `--verify --max-usd <cap>` judges existing lessons against the transcripts they cite — the one thing the deterministic audit cannot do (a well-cited lesson can still be wrong). A `contradicted` verdict produces a governed correction — but only if the rebuttal's own citations resolve; a hallucinated rebuttal is recorded as inconclusive, never guessed. Verdicts persist, so repeated dreams re-verify nothing; restatements of supported lessons are marked `confidence="verified"`, structural-only ones say `structural`.
+
 It re-verifies every experience lesson against the execution records it cites (recording a `verified_on` date on restatements), merges duplicate lessons, keeps later corrections with a "replaces" note, marks unresolved disagreements as explicit CONFLICTs instead of guessing, and republishes the library as a small linked memory wiki (`memory/<domain>.md` files plus a regenerated `AGENTS.md` index, hand-written standing text preserved). The wiki is published as a normal memory-only bundle patch against the adopted harness, so adoption flows through the usual validated path; superseded entries stay in the store as audit stubs while snapshots stop serving them.
 
 ### Testing the dream
@@ -333,6 +335,7 @@ Three levels, from fast to realistic. None of the first two spend money or need 
 
 ```bash
 uv run pytest tests/test_dreaming.py -v    # the dreaming tests alone
+uv run pytest tests/test_semantic.py -v    # semantic audit + token budget
 uv run pytest -q                           # the full suite
 ```
 

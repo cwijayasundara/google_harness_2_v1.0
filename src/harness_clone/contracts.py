@@ -29,6 +29,9 @@ class HarnessConfig(Record):
     compaction_fraction: float = Field(default=0.8, gt=0, lt=1)
     retrieval_limit: int = Field(default=5, ge=1, le=100)
     delegation_depth: int = Field(default=2, ge=0, le=8)
+    # The injected memory layer's token budget (chars/4 ≈ tokens). The
+    # compiler preloads pages within it; the dream splits pages to fit.
+    memory_budget_tokens: int = Field(default=4000, ge=256, le=100000)
 
 
 class ExperimentConfig(Record):
@@ -184,10 +187,11 @@ class DreamReport(Record):
     analyzed: int = 0
     distilled: int = 0
     distill_skipped: int = 0
-    # Live distillation outcome (all zeros when distillation is off).
-    analyzed: int = 0
-    distilled: int = 0
-    distill_skipped: int = 0
+    # Semantic audit outcome (all zeros when --verify is off).
+    semantic_checked: int = 0
+    semantic_supported: int = 0
+    semantic_corrected: int = 0
+    semantic_inconclusive: int = 0
 
 
 class TaskResult(Record):

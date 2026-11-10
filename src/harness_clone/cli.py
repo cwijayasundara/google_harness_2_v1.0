@@ -129,15 +129,15 @@ def _admit_live(max_usd: str) -> Decimal:
     return cap
 
 
-def _distill_config(args) -> ExperimentConfig | None:
-    """A spending-capped config for --distill, or None for the free dream."""
-    if not args.distill:
+def _live_config(args) -> ExperimentConfig | None:
+    """A spending-capped config for --distill/--verify, or None for the free dream."""
+    if not (args.distill or args.verify):
         return None
     cap = Decimal(str(args.max_usd))
     if cap <= 0:
-        raise ValueError("--distill requires a nonzero --max-usd spending cap")
+        raise ValueError("--distill/--verify requires a nonzero --max-usd spending cap")
     if not os.environ.get("FIREWORKS_API_KEY"):
-        raise ValueError("--distill requires FIREWORKS_API_KEY")
+        raise ValueError("--distill/--verify requires FIREWORKS_API_KEY")
     return _pinned_config(cap)
 
 
@@ -403,10 +403,15 @@ def parser():
         help="analyze full transcripts for lessons reflection missed (model calls, metered)",
     )
     dream.add_argument(
+        "--verify",
+        action="store_true",
+        help="judge existing lessons against the transcripts they cite (model calls, metered)",
+    )
+    dream.add_argument(
         "--max-usd",
         type=float,
         default=0.0,
-        help="spending cap for --distill analysis (required with --distill)",
+        help="spending cap for --distill/--verify analysis (required with either)",
     )
     for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
@@ -493,7 +498,8 @@ def main(argv=None):
                 parent,
                 adopted_digest=adopted_digest,
                 adopt_base_dir=args.base_dir if args.adopt else None,
-                distill_config=_distill_config(args),
+                distill_config=_live_config(args) if args.distill else None,
+                verify_config=_live_config(args) if args.verify else None,
             ).model_dump(mode="json")
         elif args.command == "run":
             cap = _admit_live(args.max_usd)

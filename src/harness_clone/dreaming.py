@@ -54,6 +54,8 @@ _SECRET = re.compile(
 _SLUG = re.compile(r"[^a-z0-9-]+")
 _INDEX_START = "<!-- dream:index:start -->"
 _INDEX_END = "<!-- dream:index:end -->"
+# Frontmatter + headers overhead when budgeting a wiki page's size.
+_FRONTMATTER_SLACK = 600
 
 
 def normalize(text: str) -> str:
@@ -239,6 +241,17 @@ def consolidate(
                 )
         else:
             source, lesson, verified = members[0], _conflict_lesson(members), None
+        if verified:
+            # A semantic "supported" verdict earns true verification;
+            # a structural-only restatement says so honestly.
+            verdict = store.get("semantic-verdict", entry_key(source))
+            confidence = (
+                "verified"
+                if isinstance(verdict, dict) and verdict.get("verdict") == "supported"
+                else "structural"
+            )
+        else:
+            confidence = source.confidence
         entry = ExperienceEntry(
             namespace=namespace,
             domain=domain,
@@ -248,7 +261,7 @@ def consolidate(
             cue=source.cue,
             lesson=lesson,
             evidence_refs=refs,
-            confidence="verified" if verified else source.confidence,
+            confidence=confidence,
             origin="dream",
             revision=revision,
             verified_on=verified,
@@ -291,19 +304,61 @@ def _chunk(domains: list[str], limit: int) -> list[list[str]]:
     return [domains[i : i + per_file] for i in range(0, len(domains), per_file)] or [[]]
 
 
+def _pack_pages(
+    sections: list[tuple[str, list[str]]], budget: int
+) -> list[list[tuple[str, list[str]]]]:
+    """Pack domain sections into page payloads of at most ~budget chars.
+
+    A section too big for an empty page splits by entry lines (a single
+    lesson is never cut). The count of pages is not capped here — the
+    caller's retrieval cap bounds the original chunking, and the compiler
+    budgets what actually preloads.
+    """
+    pages: list[list[tuple[str, list[str]]]] = [[]]
+    used = 0
+    for domain, lines in sections:
+        header_cost = len(domain) + 8
+        for group in _line_groups(lines, max(256, budget - header_cost)):
+            cost = header_cost + sum(len(line) + 1 for line in group)
+            if pages[-1] and used + cost > budget:
+                pages.append([])
+                used = 0
+            pages[-1].append((domain, group))
+            used += cost
+    return pages
+
+
+def _line_groups(lines: list[str], limit: int) -> list[list[str]]:
+    groups: list[list[str]] = []
+    current: list[str] = []
+    used = 0
+    for line in lines:
+        if current and used + len(line) + 1 > limit:
+            groups.append(current)
+            current, used = [], 0
+        current.append(line)
+        used += len(line) + 1
+    if current or not groups:
+        groups.append(current)
+    return groups
+
+
 def build_memory_files(
     entries: list[ExperienceEntry],
     parent_root: Path,
     *,
     adopted_digest: str | None = None,
     retrieval_limit: int = 5,
+    memory_budget_tokens: int = 4000,
 ) -> dict[str, str]:
-    """The wiki: AGENTS.md index plus one linked file per domain group.
+    """The wiki: AGENTS.md index plus linked files per domain group.
 
     The index is the injected top layer of the memory hierarchy and stays
     inside the harness's retrieval cap; detail lives one link away. Files
     keep frontmatter (name/description) and ``[[slug]]`` links so a future
-    agent can traverse the store instead of rediscovering it.
+    agent can traverse the store instead of rediscovering it. A page that
+    would exceed the injected layer's token budget is split into
+    ``<domain>-<n>.md`` parts, each indexed — lessons are never truncated.
     """
     superseded: set[str] = set()
     for entry in entries:
@@ -317,33 +372,37 @@ def build_memory_files(
     domains = sorted(by_domain, key=lambda d: (d[0], d[1]))
     files: dict[str, str] = {}
     file_domains: dict[str, list[str]] = {}
+    budget = max(256, memory_budget_tokens) * 4 - _FRONTMATTER_SLACK
     for number, chunk in enumerate(_chunk(domains, max(1, retrieval_limit - 1)), start=1):
         slug = _SLUG.sub("-", chunk[0][0]).strip("-") or "domain"
-        name = f"{slug}.md" if len(chunk) == 1 else f"{slug}-and-more-{number}.md"
-        file_domains[f"memory/{name}"] = sorted({d for d, _ in chunk})
+        # Render each domain's section, then pack sections into pages of
+        # at most one budget each; a single domain too big for one page
+        # splits by entry lines. Lesson text is never truncated.
         sections = []
         for domain, namespace in chunk:
             members = sorted(by_domain[(domain, namespace)], key=lambda e: (e.ordinal, e.revision))
             lines = [
-                f"## {domain}",
-                "",
                 # Plain statements of current understanding, not session
                 # stories; provenance shows how each rule is known.
-                *(
-                    f"- {e.lesson}{_provenance(e, adopted_digest)}"
-                    for e in members
-                ),
-                "",
+                f"- {e.lesson}{_provenance(e, adopted_digest)}"
+                for e in members
             ]
-            sections.extend(lines)
-        body = (
-            "---\n"
-            f"name: {slug}\n"
-            f"description: Consolidated lessons for {', '.join(sorted({d for d, _ in chunk}))}; "
-            "read before tasks in these domains.\n"
-            "---\n\n" + "\n".join(sections).rstrip() + "\n"
-        )
-        files[f"memory/{name}"] = body[:100_000]
+            sections.append((domain, lines))
+        for part, payload in enumerate(_pack_pages(sections, budget), start=1):
+            name = f"{slug}.md" if len(chunk) == 1 and part == 1 else (
+                f"{slug}-{part}.md" if len(chunk) == 1 else f"{slug}-and-more-{number}-{part}.md"
+            )
+            file_domains[f"memory/{name}"] = sorted({d for d, _ in payload})
+            body_parts = []
+            for domain, lines in payload:
+                body_parts.extend([f"## {domain}", "", *lines, ""])
+            files[f"memory/{name}"] = (
+                "---\n"
+                f"name: {slug}\n"
+                f"description: Consolidated lessons for {', '.join(sorted({d for d, _ in payload}))}; "
+                "read before tasks in these domains.\n"
+                "---\n\n" + "\n".join(body_parts).rstrip() + "\n"
+            )
     index = [_INDEX_START, "", "Long-term memory, distilled offline from earlier runs."]
     index.append("Trust the provenance dates; re-verify anything marked stale or conflicting.")
     for rel in sorted(file_domains):
@@ -364,15 +423,16 @@ def run_dream(
     retrieval_limit: int | None = None,
     adopt_base_dir: Path | None = None,
     distill_config: ExperimentConfig | None = None,
+    verify_config: ExperimentConfig | None = None,
 ) -> DreamReport:
     """Audit, consolidate, and republish memory as a candidate bundle patch.
 
     The patch applies to ``parent_root`` (normally the adopted bundle) and
     is published into the run store; adopting it into a portfolio base
-    directory is an explicit, separate step. With ``distill_config`` (a
-    spending-capped ``ExperimentConfig``), full transcripts are first
-    analyzed for process lessons reflection missed; every metered call is
-    charged to the same budget ledger as editing.
+    directory is an explicit, separate step. ``distill_config`` and
+    ``verify_config`` (spending-capped ``ExperimentConfig``) opt into the
+    metered stages: full-transcript distillation and the semantic audit
+    that judges existing lessons against the transcripts they cite.
     """
     parent_root = Path(parent_root)
     if adopted_digest is None:
@@ -388,21 +448,36 @@ def run_dream(
             parent_root = adopted_bundle
     if retrieval_limit is None:
         config_file = parent_root / "config.json"
-        retrieval_limit = (
-            HarnessConfig.model_validate_json(config_file.read_text()).retrieval_limit
+        tuning = (
+            HarnessConfig.model_validate_json(config_file.read_text())
             if config_file.is_file()
-            else 5
+            else HarnessConfig()
         )
+        retrieval_limit = tuning.retrieval_limit
+        memory_budget_tokens = tuning.memory_budget_tokens
+    else:
+        memory_budget_tokens = 4000
     entries = load_entries(store)
     distill_stats = None
     if distill_config is not None:
         from .distill import analyze_transcripts
 
         _, distill_stats = analyze_transcripts(distill_config, store, entries)
+    semantic_stats = None
+    if verify_config is not None:
+        from .semantic import verify_semantics
+
+        _, semantic_stats = verify_semantics(
+            verify_config, store, entries, adopted_digest=adopted_digest
+        )
     audit = audit_library(store, entries, adopted_digest)
     dream = consolidate(store, entries, audit)
     files = build_memory_files(
-        entries, parent_root, adopted_digest=adopted_digest, retrieval_limit=retrieval_limit
+        entries,
+        parent_root,
+        adopted_digest=adopted_digest,
+        retrieval_limit=retrieval_limit,
+        memory_budget_tokens=memory_budget_tokens,
     )
     report = DreamReport(
         audit=audit,
@@ -414,6 +489,10 @@ def run_dream(
         analyzed=distill_stats.analyzed if distill_stats else 0,
         distilled=distill_stats.distilled if distill_stats else 0,
         distill_skipped=distill_stats.skipped if distill_stats else 0,
+        semantic_checked=semantic_stats.checked if semantic_stats else 0,
+        semantic_supported=semantic_stats.supported if semantic_stats else 0,
+        semantic_corrected=semantic_stats.corrected if semantic_stats else 0,
+        semantic_inconclusive=semantic_stats.inconclusive if semantic_stats else 0,
     )
     if files:
         patch = HarnessPatch(parent_digest=adopted_digest, upserts=files)
