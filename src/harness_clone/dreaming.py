@@ -424,6 +424,7 @@ def run_dream(
     adopt_base_dir: Path | None = None,
     distill_config: ExperimentConfig | None = None,
     verify_config: ExperimentConfig | None = None,
+    organize_config: ExperimentConfig | None = None,
 ) -> DreamReport:
     """Audit, consolidate, and republish memory as a candidate bundle patch.
 
@@ -431,8 +432,10 @@ def run_dream(
     is published into the run store; adopting it into a portfolio base
     directory is an explicit, separate step. ``distill_config`` and
     ``verify_config`` (spending-capped ``ExperimentConfig``) opt into the
-    metered stages: full-transcript distillation and the semantic audit
-    that judges existing lessons against the transcripts they cite.
+    metered stages: full-transcript distillation, the semantic audit that
+    judges existing lessons against the transcripts they cite, and the
+    organizer pass that rewrites each wiki page. Link repair runs in every
+    dream: deterministic and free.
     """
     parent_root = Path(parent_root)
     if adopted_digest is None:
@@ -479,6 +482,14 @@ def run_dream(
         retrieval_limit=retrieval_limit,
         memory_budget_tokens=memory_budget_tokens,
     )
+    organize_stats = None
+    if organize_config is not None and files:
+        from .organize import organize_wiki
+
+        files, organize_stats = organize_wiki(organize_config, store, files)
+    from .organize import repair_links
+
+    link_stats = repair_links(files)
     report = DreamReport(
         audit=audit,
         restated=sum(1 for e in dream if not e.lesson.startswith("CONFLICT")),
@@ -493,6 +504,10 @@ def run_dream(
         semantic_supported=semantic_stats.supported if semantic_stats else 0,
         semantic_corrected=semantic_stats.corrected if semantic_stats else 0,
         semantic_inconclusive=semantic_stats.inconclusive if semantic_stats else 0,
+        organized=organize_stats.organized if organize_stats else 0,
+        organizer_skipped=organize_stats.skipped if organize_stats else 0,
+        links_repaired=link_stats.repaired,
+        links_dropped=link_stats.dropped,
     )
     if files:
         patch = HarnessPatch(parent_digest=adopted_digest, upserts=files)

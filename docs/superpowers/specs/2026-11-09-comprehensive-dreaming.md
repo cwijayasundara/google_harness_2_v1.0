@@ -1,7 +1,7 @@
 # Comprehensive dreaming: semantic audit, representations, goal-shaping
 
 Date: 2026-11-09
-Status: Phase 1 + 1.5 implemented; Phases 2–4 planned
+Status: Phases 1, 1.5 and 2 implemented; Phases 3–4 planned
 References:
 - docs/dreaming.md — current dream design and guarantees
 - Anthropic, "The components of agent memory" (Nov 2026)
@@ -59,7 +59,7 @@ The MEMORY.md 200-line/25 KB rule, made precise.
   `<domain>-<n>.md` parts, each within budget; the index links every
   part.
 
-## Phase 2 — Representations (planned)
+## Phase 2 — Representations (implemented)
 
 - Deterministic link repair: repoint `[[slug]]` targets that exist under a
   normalized alias; optional one structured call per dangling link
@@ -67,6 +67,16 @@ The MEMORY.md 200-line/25 KB rule, made precise.
 - Organizer pass per domain: one metered call rewriting the wiki page
   around distilled lessons (sections, cross-links, promotion), output
   confined to `memory/` paths through the normal patch path.
+
+Implemented in `src/harness_clone/organize.py` as two layers, slightly
+refined from the sketch: dangling-link adjudication turned out to need no
+model call — dropping the brackets deterministically keeps the words and
+loses the lie, and the organizer pass subsumes stub/redirect creation.
+Link repair (`links_repaired` / `links_dropped`) runs free in every dream,
+standing text untouched. The organizer (`--organize --max-usd`) caches
+outcomes under `kind='organized'` keyed by page name + raw-page digest,
+so unchanged dreams recall rewrites for free; secret-shaped or bloated
+rewrites are recorded skips; frontmatter is regenerated deterministically.
 
 ## Phase 3 — Goal-shaped memory (planned)
 

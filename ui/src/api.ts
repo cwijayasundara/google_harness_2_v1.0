@@ -175,6 +175,10 @@ export interface DreamReport {
   semantic_supported?: number;
   semantic_corrected?: number;
   semantic_inconclusive?: number;
+  organized?: number;
+  organizer_skipped?: number;
+  links_repaired?: number;
+  links_dropped?: number;
 }
 
 export interface DreamRequest {

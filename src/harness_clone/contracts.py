@@ -192,6 +192,12 @@ class DreamReport(Record):
     semantic_supported: int = 0
     semantic_corrected: int = 0
     semantic_inconclusive: int = 0
+    # Organizer outcome (all zeros when --organize is off).
+    organized: int = 0
+    organizer_skipped: int = 0
+    # Deterministic link repair (runs every dream).
+    links_repaired: int = 0
+    links_dropped: int = 0
 
 
 class TaskResult(Record):

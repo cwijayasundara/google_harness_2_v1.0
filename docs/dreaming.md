@@ -43,7 +43,7 @@ This repo already had the capture half (`editor.reflect()` →
 ## 3. Pipeline
 
 `harness-clone dream --run-dir <dir> [--base-dir runs/portfolio] [--adopt]
-[--distill --max-usd <cap>] [--verify --max-usd <cap>]`
+[--distill --max-usd <cap>] [--verify --max-usd <cap>] [--organize --max-usd <cap>]`
 
 0. **Distill** (optional, metered). With `--distill`, every execution
    transcript not yet analyzed is read with hindsight by one structured
@@ -76,6 +76,20 @@ This repo already had the capture half (`editor.reflect()` →
    (`confidence="structural"`). Stale-bundle entries are verified
    first — the information most likely to have changed. Report:
    `semantic_checked / supported / corrected / inconclusive`.
+0c. **Organize** (optional, metered). With `--organize`, one structured
+   call per wiki page rewrites the page around its lessons — sections,
+   cross-links, promotion of load-bearing rules — keeping every lesson's
+   meaning and provenance; the rewrite replaces only that page's body in
+   the memory-only patch, and outcomes persist under `kind='organized'`
+   keyed by page name plus the raw page's digest, so a second dream over
+   unchanged entries reuses the cached rewrite and calls the model zero
+   times. Credential-shaped or implausibly bloated rewrites are skipped
+   with a recorded reason. Report: `organized / organizer_skipped`.
+0d. **Link repair** (deterministic, free). Every `[[slug]]` target is
+   checked against the pages that exist: normalized aliases are repointed
+   at the canonical page, dangling brackets are dropped (the words stay).
+   Hand-written standing text is never touched. Report:
+   `links_repaired / links_dropped`.
 1. **Audit** (deterministic, free). Load every entry; classify:
    `verified` (refs resolve, no verification date yet), `intact` (already
    restated), `broken-ref`, `stale` (bundle differs from adopted),
@@ -93,8 +107,9 @@ This repo already had the capture half (`editor.reflect()` →
    `memory/<domain>.md` (frontmatter, plain current-understanding
    statements, inline provenance: cue, verified date or unverified, task,
    bundle, staleness). `memory/AGENTS.md` keeps the standing text and
-   regenerates only the index block. Files are chunked to respect
-   `retrieval_limit` — the injected layer stays small.
+   regenerates only the index block. Pages are chunked to respect both
+   `retrieval_limit` and `memory_budget_tokens`; oversized pages split
+   into indexed parts.
 4. **Publish**. The wiki becomes a memory-only `HarnessPatch` against the
    adopted digest, applied and published as a normal digest-verified bundle
    (`apply_patch` → `publish_bundle`). Nothing outside the editable surface
@@ -183,3 +198,31 @@ Properties:
 - **Report.** `semantic_checked / supported / corrected /
   inconclusive` join the existing counters; the free dream never
   changes.
+
+## 7. Representations: link repair and the organizer (`--organize`)
+
+The wiki is rebuilt from entries every dream, so its shape stays
+regenerable. Two layers improve that shape:
+
+**Link repair — deterministic and free, part of every dream.** Every
+`[[slug]]` target is checked against the pages that actually exist:
+a target that exists under a normalized alias (`[[Code_Checkpoint]]`,
+`[[OPS]]`) is repointed at the canonical page; a target that resolves to
+nothing has its brackets dropped — the words stay, the dead link goes.
+Hand-written standing text in `AGENTS.md` is never touched; only the
+regenerated index block is repaired. The report counts
+`links_repaired / links_dropped`. This also sanitizes links that model
+stages emit (distilled lessons, organizer rewrites).
+
+**The organizer pass — `--organize`, metered.** One structured call per
+wiki page rewrites the page around its lessons: sections, cross-links,
+promotion of load-bearing rules to the top. The prompt requires every
+lesson's meaning and provenance to survive unchanged; the output
+replaces only that page's body inside the same memory-only
+`HarnessPatch` (frontmatter is regenerated deterministically, not by the
+model). The same guards apply as everywhere else: credential-shaped
+rewrites and implausibly bloated rewrites are skipped with a recorded
+reason, organizer failures count as skips, and outcomes persist under
+`kind='organized'` keyed by the page name plus the raw page's digest —
+so a second dream over unchanged entries reuses the cached rewrite and
+makes **zero** model calls. Report: `organized / organizer_skipped`.

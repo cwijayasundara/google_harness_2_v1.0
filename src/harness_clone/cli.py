@@ -130,14 +130,14 @@ def _admit_live(max_usd: str) -> Decimal:
 
 
 def _live_config(args) -> ExperimentConfig | None:
-    """A spending-capped config for --distill/--verify, or None for the free dream."""
-    if not (args.distill or args.verify):
+    """A spending-capped config for --distill/--verify/--organize, or None for the free dream."""
+    if not (args.distill or args.verify or getattr(args, "organize", False)):
         return None
     cap = Decimal(str(args.max_usd))
     if cap <= 0:
-        raise ValueError("--distill/--verify requires a nonzero --max-usd spending cap")
+        raise ValueError("--distill/--verify/--organize requires a nonzero --max-usd spending cap")
     if not os.environ.get("FIREWORKS_API_KEY"):
-        raise ValueError("--distill/--verify requires FIREWORKS_API_KEY")
+        raise ValueError("--distill/--verify/--organize requires FIREWORKS_API_KEY")
     return _pinned_config(cap)
 
 
@@ -408,10 +408,15 @@ def parser():
         help="judge existing lessons against the transcripts they cite (model calls, metered)",
     )
     dream.add_argument(
+        "--organize",
+        action="store_true",
+        help="rewrite each wiki page around its lessons (model calls, metered)",
+    )
+    dream.add_argument(
         "--max-usd",
         type=float,
         default=0.0,
-        help="spending cap for --distill/--verify analysis (required with either)",
+        help="spending cap for --distill/--verify/--organize analysis (required with any)",
     )
     for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
@@ -500,6 +505,7 @@ def main(argv=None):
                 adopt_base_dir=args.base_dir if args.adopt else None,
                 distill_config=_live_config(args) if args.distill else None,
                 verify_config=_live_config(args) if args.verify else None,
+                organize_config=_live_config(args) if args.organize else None,
             ).model_dump(mode="json")
         elif args.command == "run":
             cap = _admit_live(args.max_usd)

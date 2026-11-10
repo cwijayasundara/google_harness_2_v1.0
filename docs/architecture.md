@@ -157,9 +157,10 @@ snapshot(namespace, domain, ordinal)    earlier ordinals only,
 ### Pass 2: dream (offline; free unless --distill)
 
 `harness-clone dream --run-dir <dir> [--base-dir <portfolio>] [--adopt]
-[--distill --max-usd <cap>]`, or `POST /api/dream` from the cockpit. No
-model calls, no spend, deterministic — unless `--distill` opts into metered
-analyzer calls:
+[--distill --max-usd <cap>] [--verify --max-usd <cap>] [--organize --max-usd <cap>]`,
+or `POST /api/dream` from the cockpit. No model calls, no spend,
+deterministic — unless `--distill` / `--verify` / `--organize` opt into
+metered analyzer calls:
 
 ```text
      run store (run.sqlite)                    adopted bundle
@@ -172,6 +173,21 @@ analyzer calls:
 |  must resolve; secrets | resolve IN the analyzed  |
 |  dropped; per-input    | trace; entries get       |
 |  accounting; converge  | origin="distilled"       |
++-----------+------------+                          |
+            |                                       |
+            v                                       |
++------------------------+                          |
+| 0b. semantic audit     | one metered structured   |
+|  (--verify) per-entry  | call per unverified      |
+|  verdict: supported /  | lesson vs the FULL traces|
+|  contradicted ->       | its citations point into;|
+|  governed correction   | verdicts persist, so     |
+|  (rebuttal refs must   | dreams converge; stale   |
+|  resolve; else marked  | bundles verified first   |
+|  inconclusive)         |                          |
++-----------+------------+                          |
+            |                                       |
+            v                                       |
 +-----------+------------+                          |
             |                                       |
             v                                       |
@@ -204,6 +220,26 @@ analyzer calls:
 +--------------------------------------------+---------------+
                                              |
                                              v
++------------------------+                          |
+| 0c. organize           | one metered structured   |
+|  (--organize) per-PAGE | call per wiki page;      |
+|  rewrite: sections,    | rewrite replaces only    |
+|  cross-links, promote  | that page's body; cached |
+|                        | by raw-page digest, so   |
+|                        | unchanged dreams recall  |
+|                        | it for free              |
++-----------+------------+                          |
+            |                                       |
+            v                                       |
++------------------------+                          |
+| 0d. link repair (free) | [[alias]] repointed to   |
+|  every dream           | the canonical page;      |
+|                        | dangling brackets dropped|
+|  hand-written standing |                          |
+|  text never touched    |                          |
++-----------+------------+                          |
+            |                                       |
+            v                                       v
 4. HarnessPatch (memory files only) -> apply_patch -> publish digest
                                              |
                                 --adopt -> archive + adopted.json
@@ -243,12 +279,12 @@ one link away, and full history stays in the store:
 |---|---|
 | Transcripts as ground truth | Execution records + traces in `run.sqlite` |
 | In-session salience tagging | `editor.reflect()` (Pass 1) |
-| Dream verifies memory against transcripts | `audit_library` re-resolving every ref; `--verify` adds the semantic judgment (`semantic.py`) |
+| Dream verifies memory against transcripts | `audit_library` re-resolving every ref; `--verify` adds the semantic judgment (`semantic.py`); `--organize` rewrites each wiki page with cached, metered calls (`organize.py`) |
 | "How it is known" / validated rules | `verified_on` date + `confidence="verified"` |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson and notes what it replaced (source, date, bundle) |
 | Conflicts: keep both sides, never guess | One `CONFLICT` note quoting every side; snapshots serve the note, not either side — a semantic-audit correction needs resolving rebuttal refs too |
 | Duplicates merged with stubs | Merge restatements supersede the group; store keeps the originals |
-| Wiki files + `_index.md` catalog | `memory/<domain>.md` + regenerated `AGENTS.md` index |
+| Wiki files + `_index.md` catalog | `memory/<domain>.md` + regenerated `AGENTS.md` index; `[[slug]]` links repaired for free every dream (aliases repointed, dangling dropped) |
 | Small injected top layer | Count bounded by `retrieval_limit`, size by `memory_budget_tokens` (index first, over-budget pages named for on-demand reading) |
 | Never copy secrets into memory | Credential-shape scan drops them from the wiki; store copies stay auditable |
 | Deterministic dreams that converge | Revisioned keys; dream entries are never restated; unchanged state republishes the same digest |
@@ -260,14 +296,16 @@ dream can never edit graders, tasks, or controller code (it flows through
 bundle validation like anything else), and repeated dreams converge instead
 of rewriting memory forever.
 
-Live distillation (`--distill`) and the semantic audit (`--verify`) are
-the metered halves of the cookbook workflow: full transcripts are re-read
-with hindsight for process lessons the in-session reflect could not see,
-and existing lessons are judged against the transcripts they cite. Every
-observation must cite rows that exist in the analyzed trace; a correction
-needs rebuttal refs that resolve too. Both flow through the same
-deterministic audit/consolidate/wiki pipeline as session lessons (see
-`docs/dreaming.md`, sections 5 and 6; design history in
+Live distillation (`--distill`), the semantic audit (`--verify`), and the
+organizer pass (`--organize`) are the metered stages of the cookbook
+workflow: full transcripts are re-read with hindsight for process lessons
+the in-session reflect could not see, existing lessons are judged against
+the transcripts they cite, and wiki pages are rewritten around their
+lessons with cross-links. Every observation must cite rows that exist in
+the analyzed trace; a correction needs rebuttal refs that resolve too;
+an organizer rewrite replaces only its own page's body. All three flow
+through the same deterministic audit/consolidate/wiki pipeline as session
+lessons (see `docs/dreaming.md`, sections 5–7; design history in
 `docs/superpowers/specs/2026-11-09-comprehensive-dreaming.md`).
 
 ## Editable bundle

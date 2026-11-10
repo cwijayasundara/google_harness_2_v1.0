@@ -325,6 +325,8 @@ Optionally add live distillation: `--distill --max-usd <cap>` re-reads full tran
 
 Optionally add a semantic audit: `--verify --max-usd <cap>` judges existing lessons against the transcripts they cite — the one thing the deterministic audit cannot do (a well-cited lesson can still be wrong). A `contradicted` verdict produces a governed correction — but only if the rebuttal's own citations resolve; a hallucinated rebuttal is recorded as inconclusive, never guessed. Verdicts persist, so repeated dreams re-verify nothing; restatements of supported lessons are marked `confidence="verified"`, structural-only ones say `structural`.
 
+Optionally add the organizer: `--organize --max-usd <cap>` rewrites each wiki page around its lessons (sections, cross-links, promoted rules) with one metered call per page, keeping every lesson's meaning and provenance. Outcomes are cached by the raw page's digest, so a second dream over unchanged entries recalls the rewrite for free. Either way, link repair runs in every dream at no cost: `[[alias]]` targets are repointed at the canonical page and dangling links lose their brackets (hand-written standing text is never touched).
+
 It re-verifies every experience lesson against the execution records it cites (recording a `verified_on` date on restatements), merges duplicate lessons, keeps later corrections with a "replaces" note, marks unresolved disagreements as explicit CONFLICTs instead of guessing, and republishes the library as a small linked memory wiki (`memory/<domain>.md` files plus a regenerated `AGENTS.md` index, hand-written standing text preserved). The wiki is published as a normal memory-only bundle patch against the adopted harness, so adoption flows through the usual validated path; superseded entries stay in the store as audit stubs while snapshots stop serving them.
 
 ### Testing the dream
@@ -336,6 +338,7 @@ Three levels, from fast to realistic. None of the first two spend money or need 
 ```bash
 uv run pytest tests/test_dreaming.py -v    # the dreaming tests alone
 uv run pytest tests/test_semantic.py -v    # semantic audit + token budget
+uv run pytest tests/test_organize.py -v    # link repair + organizer pass
 uv run pytest -q                           # the full suite
 ```
 
