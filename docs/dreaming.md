@@ -28,7 +28,7 @@ This repo already had the capture half (`editor.reflect()` →
 | Memory notes | `ExperienceEntry` (cue / lesson / evidence_refs / confidence) |
 | Salience tagging in the moment | `editor.reflect()` after each adopted execution (existing) |
 | Dream extracts what reflection missed | `distill.py` (`--distill`): one metered analyzer call per unanalyzed transcript over the FULL trace (failed attempts, fallbacks, error→repair), guarded by resolvable citations, credential scrub, and per-input accounting |
-| Dream verifies memory against transcripts | `audit_library`: every entry's evidence refs re-resolved against stored executions; digest staleness checked against the adopted bundle |
+| Dream checks memory against transcripts | `audit_library`: every entry's evidence refs re-resolved against stored executions; digest staleness checked against the adopted digest. A *structural* check — it catches broken citations, not false lessons whose citations resolve; semantic re-reading of transcripts is `distill.py`'s job (and a future audit pass) |
 | "How it is known" — validated rules | `verified_on` date + `confidence="verified"` on dream restatements |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson, notes what it replaced with source + date, supersedes the old entries |
 | Conflicts: keep both sides, never guess | `CONFLICT` note quoting every side with task, bundle, and verification date; snapshot serves the note instead of either side |
@@ -95,6 +95,11 @@ This repo already had the capture half (`editor.reflect()` →
   opts into metered analyzer calls through the same gateway as editing.
   The cockpit's dream button stays free (distillation is CLI-governed
   spend).
+- **Structural, not semantic.** The dream proves citations resolve,
+  duplicates merge, conflicts surface, and bundles are fresh. It cannot
+  prove a well-cited lesson is *true* — that needs a model re-reading
+  the transcript (distillation writes new lessons; a semantic audit of
+  existing ones is future work).
 - **Append-only truth.** Nothing in the store is deleted or rewritten;
   superseded entries remain inspectable.
 - **Snapshots stay causal.** Ordinal scoping is preserved; corrections are
