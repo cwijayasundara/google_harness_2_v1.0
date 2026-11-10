@@ -375,6 +375,15 @@ uv run harness-clone dream --run-dir runs/portfolio --base-dir runs/portfolio --
 
 Without `--adopt` the dream bundle waits in the run store for the next evolution or for review; with it, `runs/portfolio/adopted.json` points at the new digest and the wiki is what agents read at startup. Design details and the mapping to Anthropic's research live in `docs/dreaming.md`.
 
+**The review loop** closes the 72%→100% cycle: after an evaluation, failed criteria become a governed rewrite of `memory/instructions.md` — the reflect steering that ships inside the editable bundle (`memory/instructions.md`, with a built-in default as fallback):
+
+```bash
+uv run harness-clone review --run-dir runs/live-summary \
+  --evaluation runs/live-summary/scoreboard.json --adopt --max-usd 0.10
+```
+
+One metered call maps the failed criteria to a rewritten instruction ("steer reflection toward the checks these failures needed"); the rewrite publishes as a memory-only bundle patch. `--adopt` makes the next evolution week's reflect read it. The loop only spends when the scoreboard says something is wrong, and reviewing the same scoreboard twice makes zero calls.
+
 ## Author a harness
 
 Start with `examples/base-harness/`:

@@ -116,6 +116,10 @@ def run_stream(
                 store.put("library-snapshot", key, saved)
             snapshot = EvidenceSnapshot.model_validate(saved)
             editor = editor_factory(task)
+            # Point reflect at the parent bundle's memory/instructions.md
+            # (the editable steering source; falls back to the default).
+            if hasattr(editor, "base_digest"):
+                editor.base_digest = base_digest
             result = run_task(task, config, store, executor, editor, base_digest, snapshot.library)
             if learn and result.selection.chosen_execution_id and hasattr(editor, "reflect"):
                 adopted = next(

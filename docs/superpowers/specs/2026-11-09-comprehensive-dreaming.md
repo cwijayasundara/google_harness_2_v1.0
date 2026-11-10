@@ -1,7 +1,7 @@
 # Comprehensive dreaming: semantic audit, representations, goal-shaping
 
 Date: 2026-11-09
-Status: Phases 1, 1.5 and 2 implemented; Phases 3–4 planned
+Status: Phases 1, 1.5, 2 and 3 implemented; Phase 4 optional, planned
 References:
 - docs/dreaming.md — current dream design and guarantees
 - Anthropic, "The components of agent memory" (Nov 2026)
@@ -78,7 +78,7 @@ outcomes under `kind='organized'` keyed by page name + raw-page digest,
 so unchanged dreams recall rewrites for free; secret-shaped or bloated
 rewrites are recorded skips; frontmatter is regenerated deterministically.
 
-## Phase 3 — Goal-shaped memory (planned)
+## Phase 3 — Goal-shaped memory (implemented)
 
 - `memory/instructions.md` becomes the reflect-steering source
   (hardcoded text as fallback), making memory instructions part of the

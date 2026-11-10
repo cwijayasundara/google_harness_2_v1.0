@@ -165,6 +165,22 @@ class DeepAgentEditor:
         self.stage = ""
         self.error = ""
         self.decisions = []
+        # The parent bundle of the evolution week; run_stream sets this so
+        # reflect can read the bundle's memory/instructions.md (falling back
+        # to the built-in default when the file is absent).
+        self.base_digest: str | None = None
+
+    def steering(self) -> str:
+        """The reflect-steering instruction, from the editable bundle when set."""
+        from .instructions import load_instructions
+
+        root = None
+        if self.base_digest:
+            try:
+                root = self.store.bundle_path(self.base_digest)
+            except ValueError:
+                root = None
+        return load_instructions(root)
 
     def set_stage(self, stage, attempt, error, decisions):
         self.stage = f"{stage}/attempt-{attempt}"
@@ -293,16 +309,7 @@ class DeepAgentEditor:
                 for stage in result.stages
             ],
             "adoption": result.selection.model_dump(mode="json"),
-            "instruction": (
-                "Return a transferable cue and lesson. Memory is a prediction "
-                "about what a future task will need: state a rule the harness "
-                "could not re-derive on its own, how the rule was verified, "
-                "and any trap that cost retries. Do not record information "
-                "readable from the task or snapshot every run. evidence_refs "
-                "must be copied exactly from valid_evidence_refs. Stage "
-                "labels, rationales, and prose are not evidence IDs. Adoption "
-                "is not proof of correctness. Avoid task-specific facts."
-            ),
+            "instruction": self.steering(),
         }
         error = ""
         for _attempt in range(2):

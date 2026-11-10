@@ -199,6 +199,33 @@ Properties:
   inconclusive` join the existing counters; the free dream never
   changes.
 
+## 8. Goal-shaped memory: `instructions.md` and the review loop
+
+Anthropic's workflow ends with a rewrite of "how this agent should think
+about its memory" — the criteria that map failures to better remembering.
+Here that loop is:
+
+- **`memory/instructions.md` is the reflect-steering source**, part of
+  the editable harness surface (versioned by bundle digest, patchable,
+  adoptable). The reflect step reads it from the parent bundle through
+  `instructions.load_instructions`; bundles predating the file fall back
+  to the built-in default text. Task agents never see it preloaded — it
+  steers the memory-writing step, not the task.
+- **`harness-clone review --run-dir <dir> --evaluation <scoreboard.json>
+  --max-usd <cap> [--adopt]`** closes the loop: the offline evaluator
+  (`harness-clone evaluate`) produces a scoreboard; when criteria fail,
+  one metered structured call re-reads the current instructions plus the
+  failed tasks' chosen-execution evidence and rewrites the file so the
+  next evolution week's reflect steers toward the missing checks, traps,
+  and procedures. The rewrite lands as a memory-only `HarnessPatch`
+  against the parent digest and is published like any bundle; adoption
+  is explicit. Credential-shaped, empty, or implausibly bloated rewrites
+  are recorded skips (`kind='reviewed'`, keyed by the instructions'
+  digest plus the scoreboard's — reviewing the same scoreboard twice
+  converges: zero model calls, identical bundle digest).
+- **No criteria failed → no call, no patch.** The loop only spends when
+  the scoreboard says something is wrong.
+
 ## 7. Representations: link repair and the organizer (`--organize`)
 
 The wiki is rebuilt from entries every dream, so its shape stays

@@ -278,7 +278,8 @@ one link away, and full history stays in the store:
 | Concept (Anthropic) | Here |
 |---|---|
 | Transcripts as ground truth | Execution records + traces in `run.sqlite` |
-| In-session salience tagging | `editor.reflect()` (Pass 1) |
+| In-session salience tagging | `editor.reflect()` (Pass 1), steered by the bundle's `memory/instructions.md` (editable; built-in default as fallback) |
+| Instructions are part of memory | `harness-clone review`: failed scoreboard criteria → one metered rewrite of `memory/instructions.md`, landed as a memory-only patch (`review.py`) |
 | Dream verifies memory against transcripts | `audit_library` re-resolving every ref; `--verify` adds the semantic judgment (`semantic.py`); `--organize` rewrites each wiki page with cached, metered calls (`organize.py`) |
 | "How it is known" / validated rules | `verified_on` date + `confidence="verified"` |
 | Later correction of a stale rule | Correction restatement keeps the newest lesson and notes what it replaced (source, date, bundle) |
@@ -318,7 +319,8 @@ config.json            context, compaction, retrieval, delegation depth
 system.md              system prompt
 guardrails.md          task-behavior guidance
 memory/*.md            startup memory, bounded by retrieval_limit and
-                       memory_budget_tokens (chars/4 ~ tokens)
+                       memory_budget_tokens (chars/4 ~ tokens);
+                       instructions.md steers reflect instead of preloading
 tools/descriptions.json
 subagents/*.json       same Fireworks model, one delegation level
 skills/<name>/SKILL.md

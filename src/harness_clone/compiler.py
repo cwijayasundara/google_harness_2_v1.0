@@ -140,7 +140,14 @@ def compile_agent(bundle_root: Path, backend, config: ExperimentConfig):
     memory = None
     if "memory" in enabled:
         selected, skipped = select_memory_pages(
-            sorted((runtime / "memory").glob("*.md")), tuning
+            # memory/instructions.md steers the reflect step, not task
+            # agents; it stays editable in the bundle but is not preloaded.
+            [
+                p
+                for p in sorted((runtime / "memory").glob("*.md"))
+                if p.name != "instructions.md"
+            ],
+            tuning,
         )
         memory = [str(p) for p in selected] or None
         if skipped:

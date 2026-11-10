@@ -418,6 +418,30 @@ def parser():
         default=0.0,
         help="spending cap for --distill/--verify/--organize analysis (required with any)",
     )
+    review = commands.add_parser(
+        "review",
+        help="rewrite memory/instructions.md from failed evaluation criteria (metered)",
+    )
+    review.add_argument("--run-dir", type=Path, required=True)
+    review.add_argument("--evaluation", type=Path, required=True, help="scoreboard JSON from evaluate")
+    review.add_argument("--base-dir", type=Path, default=Path("runs/portfolio"))
+    review.add_argument(
+        "--base-harness",
+        type=Path,
+        default=None,
+        help="parent bundle when no adoption exists in --base-dir",
+    )
+    review.add_argument(
+        "--adopt",
+        action="store_true",
+        help="adopt the rewritten bundle into --base-dir after publishing it",
+    )
+    review.add_argument(
+        "--max-usd",
+        type=float,
+        default=0.0,
+        help="spending cap for the review call (required)",
+    )
     for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
         cmd.add_argument("--run-dir", type=Path, required=True)
@@ -507,6 +531,34 @@ def main(argv=None):
                 verify_config=_live_config(args) if args.verify else None,
                 organize_config=_live_config(args) if args.organize else None,
             ).model_dump(mode="json")
+        elif args.command == "review":
+            from .bundles import bundle_digest
+            from .review import review_instructions
+
+            cap = Decimal(str(args.max_usd))
+            if cap <= 0:
+                raise ValueError("review requires a nonzero --max-usd spending cap")
+            if not os.environ.get("FIREWORKS_API_KEY"):
+                raise ValueError("review requires FIREWORKS_API_KEY")
+            store = RunStore(args.run_dir)
+            adopted = read_adopted(args.base_dir)
+            if adopted:
+                import_bundle(store, args.base_dir, adopted)
+                parent = Path(store.bundle_path(adopted))
+            else:
+                parent = args.base_harness or default_bundle()
+            evaluation = json.loads(Path(args.evaluation).read_text())
+            digest, stats = review_instructions(
+                _pinned_config(cap), store, parent, evaluation
+            )
+            report = stats.model_dump(mode="json")
+            report["patch_digest"] = digest
+            if digest and args.adopt:
+                from .portfolio_ops import archive_bundle, write_adopted
+
+                archive_bundle(Path(args.base_dir), store, digest)
+                write_adopted(Path(args.base_dir), digest, store)
+                report["adopted"] = True
         elif args.command == "run":
             cap = _admit_live(args.max_usd)
             from .tasks import load_task
