@@ -10,7 +10,12 @@ def evaluate(store, expectations: dict, output: Path) -> dict:
     results = [TaskResult.model_validate(r) for r in store.get("runtime", "results") or []]
     rows = []
     for result in results:
-        expected = expectations.get(result.task_id)
+        expected = {
+            path: value
+            for path, value in (expectations.get(result.task_id) or {}).items()
+            # "rubric" holds criteria for the metered judge, not an artifact.
+            if path != "rubric"
+        }
         chosen = next(
             (
                 r
@@ -42,6 +47,12 @@ def evaluate(store, expectations: dict, output: Path) -> dict:
         "coverage": scored / len(rows) if rows else 0.0,
         "results": rows,
     }
+    write_report(store, report, output)
+    return report
+
+
+def write_report(store, report: dict, output: Path) -> Path:
+    """Persist a scoreboard, refusing to hide answers inside online storage."""
     output = output.resolve()
     # Avoid overwriting online storage or task evidence with hidden expectations/results.
     if output.is_relative_to(store.root):
@@ -52,4 +63,4 @@ def evaluate(store, expectations: dict, output: Path) -> dict:
             raise ValueError("evaluation output must be outside every task source directory")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2))
-    return report
+    return output

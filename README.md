@@ -339,6 +339,8 @@ Three levels, from fast to realistic. None of the first two spend money or need 
 uv run pytest tests/test_dreaming.py -v    # the dreaming tests alone
 uv run pytest tests/test_semantic.py -v    # semantic audit + token budget
 uv run pytest tests/test_organize.py -v    # link repair + organizer pass
+uv run pytest tests/test_review.py -v      # instructions.md + review loop
+uv run pytest tests/test_judge.py -v       # rubric judge
 uv run pytest -q                           # the full suite
 ```
 
@@ -383,6 +385,8 @@ uv run harness-clone review --run-dir runs/live-summary \
 ```
 
 One metered call maps the failed criteria to a rewritten instruction ("steer reflection toward the checks these failures needed"); the rewrite publishes as a memory-only bundle patch. `--adopt` makes the next evolution week's reflect read it. The loop only spends when the scoreboard says something is wrong, and reviewing the same scoreboard twice makes zero calls.
+
+**The rubric judge** grades what exact assertions can't: expectations files may carry optional `"rubric": ["criterion", ...]` per task, and `harness-clone judge --run-dir <dir> --expectations <file> --output <json> --evaluation <artifact-scoreboard> --max-usd <cap>` runs one metered structured call per rubric task, merging grades into the same scoreboard shape (a task passes only if artifact checks and rubric agree). A grader that fails or omits a criterion leaves the task `unscored` — never a guessed pass; re-judging unchanged outputs makes zero calls.
 
 ## Author a harness
 

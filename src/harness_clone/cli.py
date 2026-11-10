@@ -442,6 +442,25 @@ def parser():
         default=0.0,
         help="spending cap for the review call (required)",
     )
+    judge_cmd = commands.add_parser(
+        "judge",
+        help="grade optional rubric criteria with metered model calls",
+    )
+    judge_cmd.add_argument("--run-dir", type=Path, required=True)
+    judge_cmd.add_argument("--expectations", type=Path, required=True)
+    judge_cmd.add_argument("--output", type=Path, required=True)
+    judge_cmd.add_argument(
+        "--evaluation",
+        type=Path,
+        default=None,
+        help="artifact scoreboard from evaluate; merged into the report",
+    )
+    judge_cmd.add_argument(
+        "--max-usd",
+        type=float,
+        default=0.0,
+        help="spending cap for rubric grading (required)",
+    )
     for name in ["demo", "run", "resume", "inspect", "evaluate", "watch"]:
         cmd = commands.add_parser(name)
         cmd.add_argument("--run-dir", type=Path, required=True)
@@ -559,6 +578,27 @@ def main(argv=None):
                 archive_bundle(Path(args.base_dir), store, digest)
                 write_adopted(Path(args.base_dir), digest, store)
                 report["adopted"] = True
+        elif args.command == "judge":
+            from .judge import judge_to
+
+            cap = Decimal(str(args.max_usd))
+            if cap <= 0:
+                raise ValueError("judge requires a nonzero --max-usd spending cap")
+            if not os.environ.get("FIREWORKS_API_KEY"):
+                raise ValueError("judge requires FIREWORKS_API_KEY")
+            store = RunStore(args.run_dir)
+            expectations = json.loads(Path(args.expectations).read_text())
+            evaluation = (
+                json.loads(Path(args.evaluation).read_text()) if args.evaluation else None
+            )
+            report, stats, _ = judge_to(
+                store,
+                expectations,
+                _pinned_config(cap),
+                args.output,
+                evaluation=evaluation,
+            )
+            report = {**report, "graded": stats.graded, "cached": stats.cached, "skipped": stats.skipped}
         elif args.command == "run":
             cap = _admit_live(args.max_usd)
             from .tasks import load_task

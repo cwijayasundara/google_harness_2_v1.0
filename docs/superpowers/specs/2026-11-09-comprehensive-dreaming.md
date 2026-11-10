@@ -1,7 +1,7 @@
 # Comprehensive dreaming: semantic audit, representations, goal-shaping
 
 Date: 2026-11-09
-Status: Phases 1, 1.5, 2 and 3 implemented; Phase 4 optional, planned
+Status: complete — Phases 1, 1.5, 2, 3 and 4 implemented
 References:
 - docs/dreaming.md — current dream design and guarantees
 - Anthropic, "The components of agent memory" (Nov 2026)
@@ -87,7 +87,7 @@ rewrites are recorded skips; frontmatter is regenerated deterministically.
   rewrite, landed as a governed memory patch (the 72%→100% loop).
 - Requires touching `run_stream`/`DeepAgentEditor.reflect` wiring.
 
-## Phase 4 — Harness² judge parity (optional, planned)
+## Phase 4 — Harness² judge parity (implemented)
 
 - `expectations` gains optional rubric criteria; `harness-clone judge`
   runs metered rubric grading into the existing scoreboard format.

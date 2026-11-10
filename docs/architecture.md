@@ -456,16 +456,17 @@ A run directory is the unit of resume and of identity.
 
 Experience entries are never updated in place. A dream restatement is a new entry with `origin="dream"`, a bumped `revision`, `verified_on` when its evidence re-resolved, and `supersedes` naming the keys it replaces; snapshots stop serving superseded keys but the store keeps them.
 
-Offline `evaluate` compares delivered artifacts with an expectations file and refuses to write its report inside any persisted task source directory.
+Offline `evaluate` compares delivered artifacts with an expectations file and refuses to write its report inside any persisted task source directory. `harness-clone judge` adds optional rubric criteria (`"rubric": [...]` per task) graded by one metered structured call per task, merged into the same scoreboard shape; outcomes persist under `kind='judged'`, so re-judging unchanged outputs makes zero model calls.
 
 ## Code map
 
 | Concern | Module |
 |---|---|
-| CLI | `src/harness_clone/cli.py` (`demo`, `run`, `resume`, `inspect`, `evaluate`, `watch`, `doctor`, `dream`), `orderops/cli.py` |
+| CLI | `src/harness_clone/cli.py` (`demo`, `run`, `resume`, `inspect`, `evaluate`, `watch`, `doctor`, `dream`, `review`, `judge`), `orderops/cli.py` |
 | Task graph | `controller.py` |
 | Cross-task lessons: capture | `experience.py` (library, snapshots, `run_stream`) |
 | Cross-task lessons: dreaming | `dreaming.py` (audit, consolidate, wiki, publish) |
+| Rubric judging | `judge.py` (metered criteria grading into the scoreboard) |
 | Bundle validation and publish | `bundles.py` |
 | Deep Agents compilation | `compiler.py`, `worker.py` |
 | Container rollout | `sandbox.py` |

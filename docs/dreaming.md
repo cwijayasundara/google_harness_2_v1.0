@@ -226,6 +226,33 @@ Here that loop is:
 - **No criteria failed → no call, no patch.** The loop only spends when
   the scoreboard says something is wrong.
 
+## 9. The rubric judge (`harness-clone judge`)
+
+Exact artifact assertions cannot grade "the reconciliation explains the
+discrepancy". Expectations files may carry optional rubric criteria per
+task (`"rubric": ["criterion", ...]`); the deterministic evaluator ignores
+that key, and `harness-clone judge --run-dir <dir> --expectations <file>
+--output <json> [--evaluation <artifact-scoreboard>] --max-usd <cap>`
+grades it with one metered structured call per rubric task
+(`judge.py`).
+
+- **Same scoreboard shape.** The report mirrors `evaluate`'s; each rubric
+  row carries per-criterion grades (`criterion / passed / reason`). With
+  `--evaluation`, rubric grades merge into the artifact scoreboard: a
+  task passes only if both agree (`artifact_status` and `rubric_status`
+  kept on the row).
+- **Strict, never guessed.** A grader that fails, omits a criterion, or
+  has no chosen output to grade leaves the task `unscored` with a
+  recorded reason — never a pass by default.
+- **Convergence.** Outcomes persist under `kind='judged'` keyed by the
+  chosen artifacts' digest plus the criteria's digest; judging the same
+  outputs against the same rubric twice makes zero model calls.
+- **Measurement, not memory.** Nothing here touches the experience
+  library, the bundles, or the budget-ledger experiments — grading is
+  offline and never feeds refinement agents.
+- Benchmark adapters stay out of scope by design (declared substrate
+  boundary).
+
 ## 7. Representations: link repair and the organizer (`--organize`)
 
 The wiki is rebuilt from entries every dream, so its shape stays
