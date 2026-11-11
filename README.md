@@ -33,7 +33,7 @@ uv run harness-clone inspect --run-dir runs/demo-parallel
 
 ```bash
 docker compose -f containers/compose.yaml --profile build build
-HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 4 passed
+HARNESS_TEST_DOCKER=1 uv run pytest -m docker -q     # expect 5 passed
 ```
 
 **4. Put credentials in `.env`** at the repository root. The file is gitignored. Confirm the Fireworks key without printing it, then follow [Run with a real API key](#run-with-a-real-api-key):
