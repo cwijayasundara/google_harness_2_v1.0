@@ -480,6 +480,12 @@ def parser():
             cmd.add_argument("--profile", choices=["research", "practical"], default="research")
             cmd.add_argument("--editor-policy", choices=["text", "pi"], default="pi")
             cmd.add_argument("--max-usd", default="0")
+            cmd.add_argument(
+                "--timeout-seconds",
+                type=int,
+                default=180,
+                help="wall-clock budget per execution stage (heavy tasks need more)",
+            )
         if name == "evaluate":
             cmd.add_argument("--expectations", type=Path, required=True)
             cmd.add_argument("--output", type=Path, required=True)
@@ -601,6 +607,8 @@ def main(argv=None):
             report = {**report, "graded": stats.graded, "cached": stats.cached, "skipped": stats.skipped}
         elif args.command == "run":
             cap = _admit_live(args.max_usd)
+            if not (1 <= args.timeout_seconds <= 3600):
+                raise ValueError("--timeout-seconds must be between 1 and 3600")
             from .tasks import load_task
             from .experience import check_stream, run_stream
 
@@ -611,6 +619,7 @@ def main(argv=None):
                 profile=args.profile,
                 editor_policy=args.editor_policy,
                 max_usd=cap,
+                timeout_seconds=args.timeout_seconds,
                 image_id=resolve_image_id(defaults.image),
                 pi_image_id=resolve_image_id(PI_IMAGE),
             )

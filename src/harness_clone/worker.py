@@ -48,6 +48,15 @@ def main():
         timeout=config.timeout_seconds,
     )
     agent = compile_agent(Path("/bundle"), backend, config)
+
+    def missing_outputs():
+        gone = []
+        for rel in task.output_paths:
+            path = Path("/output") / rel
+            if not path.is_file() or path.stat().st_size == 0:
+                gone.append(rel)
+        return gone
+
     result = agent.invoke(
         {
             "messages": [
@@ -64,6 +73,34 @@ def main():
             "recursion_limit": config.max_tool_calls * 3 + 10,
         },
     )
+    # One deterministic delivery-repair nudge: agents sometimes end their
+    # turn mid-investigation without writing the deliverables. collect_
+    # artifacts (not this nudge) stays the judge of what counts as delivered.
+    if missing_outputs():
+        try:
+            result = agent.invoke(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "You ended your turn without writing the required "
+                            "outputs: "
+                            + ", ".join(missing_outputs())
+                            + ". Write your best-effort answer for each under /output/ "
+                            "now, then end your turn. A delivered approximation beats "
+                            "a missing file.",
+                        }
+                    ]
+                },
+                config={
+                    "configurable": {"thread_id": request["execution_id"]},
+                    "recursion_limit": config.max_tool_calls * 3 + 10,
+                },
+            )
+        except Exception:
+            # Keep the first turn's trace and let the missing output be
+            # reported honestly rather than crashing the worker.
+            pass
     trace = []
     for i, message in enumerate(result["messages"]):
         trace.append(
