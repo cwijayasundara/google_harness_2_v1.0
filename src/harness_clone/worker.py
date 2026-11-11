@@ -5,10 +5,48 @@ import os
 from pathlib import Path
 
 
+def command_timeout(stage_timeout: int) -> int:
+    """Per-command shell bound: a fraction of the stage, never all of it.
+
+    A runaway command (a filesystem-wide `grep -r ... /`) that inherits the
+    whole stage timeout gets the stage killed with no trace and no output.
+    Bounding it returns exit 124 to the agent, which can then move on.
+    """
+    return max(5, min(120, stage_timeout // 4))
+
+
+def make_backend(config, root_dir="/workspace"):
+    from deepagents.backends import LocalShellBackend
+    from deepagents.backends.protocol import GrepResult
+
+    limit = command_timeout(config.timeout_seconds)
+
+    class BoundedBackend(LocalShellBackend):
+        # The Python grep fallback reads whole files into this process, so a
+        # search rooted at / (proc, sys, site-packages) exhausts container memory.
+        def grep(self, pattern, path=None, *args, **kwargs):
+            if not path or os.path.normpath(path) == "/":
+                return GrepResult(
+                    error="grep path must be a directory such as /source, /workspace or /output",
+                    matches=[],
+                )
+            return super().grep(pattern, path, *args, **kwargs)
+
+        # The execute tool lets the agent request up to an hour per command.
+        def execute(self, command, *, timeout=None):
+            return super().execute(command, timeout=min(timeout or limit, limit))
+
+    return BoundedBackend(
+        root_dir=root_dir,
+        virtual_mode=False,
+        env={"PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"},
+        timeout=limit,
+    )
+
+
 def main():
     if not Path("/control/request.json").is_file() or not os.environ.get("HARNESS_GATEWAY_URL"):
         raise RuntimeError("worker requires a configured container environment")
-    from deepagents.backends import LocalShellBackend
     import time
     import httpx
     from .compiler import compile_agent
@@ -28,25 +66,7 @@ def main():
             if time.monotonic() > deadline:
                 raise RuntimeError("inference gateway did not become ready")
             time.sleep(0.2)
-    from deepagents.backends.protocol import GrepResult
-
-    class BoundedBackend(LocalShellBackend):
-        # The Python grep fallback reads whole files into this process, so a
-        # search rooted at / (proc, sys, site-packages) exhausts container memory.
-        def grep(self, pattern, path=None, *args, **kwargs):
-            if not path or os.path.normpath(path) == "/":
-                return GrepResult(
-                    error="grep path must be a directory such as /source, /workspace or /output",
-                    matches=[],
-                )
-            return super().grep(pattern, path, *args, **kwargs)
-
-    backend = BoundedBackend(
-        root_dir="/workspace",
-        virtual_mode=False,
-        env={"PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"},
-        timeout=config.timeout_seconds,
-    )
+    backend = make_backend(config)
     agent = compile_agent(Path("/bundle"), backend, config)
 
     def missing_outputs():
