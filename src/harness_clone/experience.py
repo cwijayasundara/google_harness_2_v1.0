@@ -81,7 +81,15 @@ def check_stream(store, tasks, base_digest, *, learn=True) -> None:
         "learn": learn,
         "base": base_digest,
     }:
-        raise ValueError("stream inputs changed; use a new run directory")
+        if previous.get("base") != base_digest:
+            reason = f"base bundle digest changed ({previous['base'][:12]} -> {base_digest[:12]})"
+        elif previous.get("learn") != learn:
+            reason = f"learning flag changed ({previous['learn']} -> {learn})"
+        else:
+            reason = "tasks or task sources changed"
+        raise ValueError(
+            f"stream inputs changed ({reason}); use a new run directory"
+        )
 
 
 def run_stream(
