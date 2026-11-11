@@ -56,6 +56,15 @@ def worker_command(
         "--cpus=1",
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=256m",
+        # The agent middleware offloads conversation history and large tool
+        # results under / on the container rootfs; the rootfs is read-only by
+        # design, so give each offload root its own writable tmpfs.
+        "--tmpfs",
+        "/conversation_history:rw,nosuid,nodev,size=128m,mode=1777",
+        "--tmpfs",
+        "/large_tool_results:rw,nosuid,nodev,size=128m,mode=1777",
+        "--tmpfs",
+        "/blobs:rw,nosuid,nodev,size=128m,mode=1777",
         "--mount",
         f"type=bind,src={work / 'source'},dst=/source,readonly",
         "--mount",

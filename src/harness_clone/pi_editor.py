@@ -257,6 +257,14 @@ class PiEditor(DeepAgentEditor):
                     "--cpus=1",
                     "--tmpfs",
                     "/tmp:rw,nosuid,nodev,size=256m",
+                    # Same agent offload roots as the executor worker: the
+                    # read-only rootfs gets per-root writable tmpfs mounts.
+                    "--tmpfs",
+                    "/conversation_history:rw,nosuid,nodev,size=128m,mode=1777",
+                    "--tmpfs",
+                    "/large_tool_results:rw,nosuid,nodev,size=128m,mode=1777",
+                    "--tmpfs",
+                    "/blobs:rw,nosuid,nodev,size=128m,mode=1777",
                     "--env",
                     f"HARNESS_GATEWAY_URL=http://{gateway}:8080/v1",
                     "--env",
