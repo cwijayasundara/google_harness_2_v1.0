@@ -1,6 +1,8 @@
 """Explicit, replayable LangGraph scheduling for Harness² task recursion."""
 
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Protocol, TypedDict
 
@@ -35,6 +37,24 @@ class GraphState(TypedDict):
     compositions: list[str]
 
 
+def _logger(task_id: str):
+    """Progress lines on stderr so stdout stays a clean JSON report."""
+    start = time.monotonic()
+
+    def log(message: str) -> None:
+        elapsed = time.monotonic() - start
+        minutes, seconds = divmod(int(elapsed), 60)
+        print(f"[{task_id} +{minutes}m{seconds:02d}s] {message}", file=sys.stderr, flush=True)
+
+    return log
+
+
+def _spend(record: ExecutionRecord) -> str:
+    if record.usage and record.usage.usd:
+        return f", ${record.usage.usd}" if record.usage.usd else ""
+    return ""
+
+
 def run_task(
     task: TaskSpec,
     config: ExperimentConfig,
@@ -56,13 +76,19 @@ def run_task(
         }
     )
     prefix = f"{task.id}/{identity[:16]}"
+    log = _logger(task.id)
     old = store.get("task", identity)
     if old:
+        log("resuming cached task result (identical inputs; no new work)")
         result = TaskResult.model_validate(old)
         for record in result.executions.values():
             if record.status == "completed":
                 store.completed_execution(record.execution_id)
         return result
+    log(
+        f"start: k={config.k} mode={config.mode} cap=${config.max_usd} "
+        f"stage_timeout={config.timeout_seconds}s base={base_digest[:12]}"
+    )
     result = TaskResult(task_id=task.id)
     trees = {"base": base_digest}
     # Reserve every planned phase up front so proposals cannot starve the
@@ -89,7 +115,12 @@ def run_task(
         eid = f"{prefix}/{label}"
         record = store.completed_execution(eid)
         if record is None:
+            log(f"executing {eid}")
+            began = time.monotonic()
             record = executor.execute(task, digest, eid)
+            took = time.monotonic() - began
+            outcome = "delivered" if record.delivered else f"FAILED ({record.error or record.status})"
+            log(f"{eid} -> {outcome} in {took:.0f}s{_spend(record)}")
             if (
                 record.execution_id != eid
                 or record.bundle_digest != digest
@@ -97,6 +128,8 @@ def run_task(
             ):
                 raise ValueError("executor returned mismatched execution identity")
             store.save_execution(record)
+        else:
+            log(f"reusing completed {eid}")
         result.executions[label] = record
         release(label)
         return record
@@ -117,6 +150,7 @@ def run_task(
         rationale = ""
         frozen = list(result.stages) if decisions is None else decisions
         for attempt in range(2):
+            log(f"editing {key} ({scope}, attempt {attempt + 1})")
             try:
                 if hasattr(editor, "set_stage"):
                     editor.set_stage(key, attempt, error, frozen)
@@ -135,9 +169,11 @@ def run_task(
                     digest = store.publish_bundle(candidate)
                 rationale = proposal.rationale
                 status = "keep_base" if digest == parent else "accepted"
+                log(f"{key} -> {status} ({digest[:12]})")
                 break
             except (ValueError, OSError, RuntimeError) as exc:
                 error = f"{type(exc).__name__}: {str(exc)[:500]}"
+                log(f"{key} attempt rejected: {error[:140]}")
         saved = {
             "label": label,
             "scope": scope,
@@ -160,7 +196,17 @@ def run_task(
             if ledger is not None:
                 for label in planned:
                     release(label)
-            raise RuntimeError("no baseline execution delivered; inspect execution errors")
+            reasons = "; ".join(
+                f"{label}: {r.error or r.status}"
+                for label, r in result.executions.items()
+                if not r.delivered
+            )
+            raise RuntimeError(
+                "no baseline execution delivered "
+                f"({reasons}). If the reason is 'timeout', raise timeout_seconds "
+                "in the bundle's config.json"
+            )
+        log("baseline delivered; editing phases next")
         return {}
 
     def proposals(state):
@@ -231,6 +277,7 @@ def run_task(
                 reason=reason,
             )
             store.put("selection", identity, result.selection.model_dump(mode="json"))
+        log(f"selected {chosen} ({reason})")
         return {}
 
     graph = StateGraph(GraphState)
