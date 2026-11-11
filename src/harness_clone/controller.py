@@ -3,6 +3,7 @@
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol, TypedDict
 
@@ -213,17 +214,26 @@ def run_task(
         rounds = range(1, config.k + 1) if config.mode == "parallel" else [state["round"]]
         # Sibling proposals must not see each other's stages; COMPOSE gets them.
         frozen = list(result.stages)
-        labels = []
-        for i in rounds:
-            for scope in ["INV", "DOM"]:
-                label = f"{scope.lower()}{i}"
+        work = [(f"{scope.lower()}{i}", scope) for i in rounds for scope in ["INV", "DOM"]]
+        labels = [label for label, _ in work]
+        if config.mode == "parallel" and len(work) > 1:
+            # Siblings are isolated by construction (frozen stages, shared
+            # parent); the store and ledger are thread-safe (one SQLite
+            # connection per transaction), so overlap their model calls.
+            with ThreadPoolExecutor(max_workers=len(work)) as pool:
+                list(pool.map(lambda item: edit(item[0], item[1], state["current"], frozen), work))
+        else:
+            for label, scope in work:
                 edit(label, scope, state["current"], frozen)
-                labels.append(label)
         return {"proposals": labels}
 
     def probes(state):
-        for label in state["proposals"]:
-            roll(label, trees[label])
+        if config.mode == "parallel" and len(state["proposals"]) > 1:
+            with ThreadPoolExecutor(max_workers=len(state["proposals"])) as pool:
+                list(pool.map(lambda label: roll(label, trees[label]), state["proposals"]))
+        else:
+            for label in state["proposals"]:
+                roll(label, trees[label])
         return {}
 
     def compose(state):

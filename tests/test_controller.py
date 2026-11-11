@@ -50,7 +50,7 @@ class FixtureEditor:
         return records[0].execution_id, "first valid output"
 
 
-def run(tmp_path, config=None, editor=None):
+def run(tmp_path, config=None, editor=None, executor=None):
     from harness_clone.controller import run_task
     from harness_clone.storage import RunStore
 
@@ -66,7 +66,7 @@ def run(tmp_path, config=None, editor=None):
         source_root=source,
         output_paths=["answer.txt"],
     )
-    executor = FixtureExecutor()
+    executor = executor or FixtureExecutor()
     result = run_task(task, config, store, executor, editor or FixtureEditor(), digest)
     return result, executor, store, task, digest
 
@@ -133,3 +133,53 @@ def test_completed_stages_not_reexecuted(tmp_path):
 def test_practical_mode_can_retain_baseline(tmp_path):
     result, *_ = run(tmp_path, ExperimentConfig(profile="practical"))
     assert "/base" in result.selection.chosen_execution_id
+
+
+def test_parallel_siblings_overlap(tmp_path):
+    """INV/DOM edits and probes run concurrently in parallel mode."""
+    import threading
+    import time as time_mod
+
+    active, peak, lock = 0, 0, threading.Lock()
+
+    class SlowExecutor(FixtureExecutor):
+        def execute(self, task, bundle_digest, execution_id):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time_mod.sleep(0.3)
+            try:
+                return super().execute(task, bundle_digest, execution_id)
+            finally:
+                with lock:
+                    active -= 1
+
+    result, *_ = run(
+        tmp_path, ExperimentConfig(mode="parallel", k=1), FixtureEditor(), SlowExecutor()
+    )
+    assert result.selection.chosen_execution_id
+    assert peak >= 2, f"sibling probes did not overlap (peak={peak})"
+
+
+def test_sequential_siblings_stay_serial(tmp_path):
+    import threading
+    import time as time_mod
+
+    active, peak, lock = 0, 0, threading.Lock()
+
+    class SlowExecutor(FixtureExecutor):
+        def execute(self, task, bundle_digest, execution_id):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time_mod.sleep(0.1)
+            try:
+                return super().execute(task, bundle_digest, execution_id)
+            finally:
+                with lock:
+                    active -= 1
+
+    run(tmp_path, ExperimentConfig(mode="sequential", k=2), FixtureEditor(), SlowExecutor())
+    assert peak == 1
